@@ -159,13 +159,16 @@ async function executeAutomation(automation: Automation, input: DispatchInput) {
     triggerEvent: input.triggerType,
   })
 
-  await db
-    .from('automations')
-    .update({
-      execution_count: (automation.execution_count ?? 0) + 1,
-      last_executed_at: new Date().toISOString(),
-    })
-    .eq('id', automation.id)
+  // Atomic counter update via the SQL function from migration 007.
+  // Doing this with a client-side read-modify-write raced when the
+  // same automation fired for two contacts simultaneously — both
+  // would read N and both write N+1, losing one count permanently.
+  const { error: rpcErr } = await db.rpc('increment_automation_execution_count', {
+    p_automation_id: automation.id,
+  })
+  if (rpcErr) {
+    console.error('[automations] increment counter failed:', rpcErr)
+  }
 }
 
 interface ExecuteArgs {
