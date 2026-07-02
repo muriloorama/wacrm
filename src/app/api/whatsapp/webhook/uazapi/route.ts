@@ -67,6 +67,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ status: "ignored" }, { status: 200 });
   }
 
+  // [DEBUG TEMPORÁRIO] grava o payload cru para diagnóstico.
+  try {
+    await supabaseAdmin().from("webhook_debug").insert({ source: "uazapi", payload: body });
+  } catch {
+    // ignora falha de debug
+  }
+
   // Todo o processamento é resiliente: qualquer erro é logado e engolido
   // para garantirmos o 200 abaixo.
   try {
