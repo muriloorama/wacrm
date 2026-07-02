@@ -57,6 +57,8 @@ interface UazapiWebhookBody {
   token?: string;
   owner?: string;
   message?: UazapiMessage;
+  // Dados do chat (contato): traz a foto de perfil do WhatsApp.
+  chat?: { image?: string; imagePreview?: string };
   // Aliases tolerados (spec / variações):
   event?: string;
   instance?: string;
@@ -176,6 +178,7 @@ async function processWebhook(body: UazapiWebhookBody) {
     const instanceToken = channel.uazapi_instance_token
       ? decrypt(channel.uazapi_instance_token)
       : "";
+    const avatarUrl = body.chat?.imagePreview || body.chat?.image || null;
     await processMessage(
       db,
       channel.account_id,
@@ -183,6 +186,7 @@ async function processWebhook(body: UazapiWebhookBody) {
       channel.id,
       data,
       instanceToken,
+      avatarUrl,
     );
     return;
   }
@@ -330,6 +334,7 @@ async function processMessage(
   channelId: string,
   data: UazapiMessage,
   instanceToken: string,
+  avatarUrl: string | null,
 ) {
   // Ignora só o que o PRÓPRIO CRM enviou pela API (senão duplicaria o que
   // já está no banco). Mensagens enviadas do CELULAR (fromMe) são
@@ -377,6 +382,7 @@ async function processMessage(
     configOwnerUserId,
     phone,
     contactName,
+    avatarUrl,
   );
   if (!contact) return;
 
@@ -460,14 +466,17 @@ async function findOrCreateContact(
   configOwnerUserId: string,
   phone: string,
   name: string,
+  avatarUrl: string | null,
 ): Promise<ContactRow | null> {
   const existing = await findExistingContact(db, accountId, phone);
   if (existing) {
-    if (name && name !== existing.name) {
-      await db
-        .from("contacts")
-        .update({ name, updated_at: new Date().toISOString() })
-        .eq("id", existing.id);
+    const patch: Record<string, unknown> = {};
+    if (name && name !== existing.name) patch.name = name;
+    // Preenche a foto se o contato ainda não tem (ou mudou).
+    if (avatarUrl && avatarUrl !== existing.avatar_url) patch.avatar_url = avatarUrl;
+    if (Object.keys(patch).length > 0) {
+      patch.updated_at = new Date().toISOString();
+      await db.from("contacts").update(patch).eq("id", existing.id);
     }
     return existing;
   }
@@ -479,6 +488,7 @@ async function findOrCreateContact(
       user_id: configOwnerUserId,
       phone,
       name: name || phone,
+      avatar_url: avatarUrl,
     })
     .select()
     .single();
