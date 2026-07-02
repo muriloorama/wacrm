@@ -757,23 +757,20 @@ async function findOrCreateConversation(
   channelId: string,
   contactId: string,
 ): Promise<ConversationRow | null> {
-  const { data: existing, error: findError } = await db
+  // A conversa é POR CANAL: o mesmo contato que escreve para canais
+  // diferentes (números diferentes) tem uma conversa separada em cada
+  // canal. Por isso filtramos também por channel_id.
+  const { data: existing } = await db
     .from("conversations")
     .select("*")
     .eq("account_id", accountId)
     .eq("contact_id", contactId)
-    .single();
+    .eq("channel_id", channelId)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
 
-  if (!findError && existing) {
-    // Garante que a conversa aponte para o canal de origem (retro-preenche
-    // conversas anteriores à existência de canais nomeados).
-    if (!existing.channel_id) {
-      await db
-        .from("conversations")
-        .update({ channel_id: channelId })
-        .eq("id", existing.id);
-      existing.channel_id = channelId;
-    }
+  if (existing) {
     return existing;
   }
 
