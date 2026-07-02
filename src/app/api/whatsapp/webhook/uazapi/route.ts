@@ -758,6 +758,43 @@ type ContactRow = any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type ConversationRow = any;
 
+/**
+ * Espelha a foto de perfil do WhatsApp (URL pps.whatsapp.net, que expira e
+ * é bloqueada por hotlink no navegador) para o Backblaze B2 — devolvendo
+ * uma URL pública permanente que o navegador consegue carregar. Em qualquer
+ * falha, devolve a URL original.
+ */
+async function mirrorAvatarToB2(
+  avatarUrl: string,
+  accountId: string,
+): Promise<string> {
+  if (!isB2Configured()) return avatarUrl;
+  try {
+    const res = await fetch(avatarUrl);
+    if (!res.ok) return avatarUrl;
+    const buf = Buffer.from(await res.arrayBuffer());
+    const ct = res.headers.get("content-type") || "image/jpeg";
+    const ext = ct.includes("png") ? "png" : "jpg";
+    const key = `avatars/account-${accountId}/${Date.now()}-${Math.abs(
+      hashString(avatarUrl),
+    )}.${ext}`;
+    await uploadBuffer(key, buf, ct);
+    return publicUrl(key);
+  } catch {
+    return avatarUrl;
+  }
+}
+
+/** Hash simples e determinístico (sem depender de Math.random/Date). */
+function hashString(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) {
+    h = (h << 5) - h + s.charCodeAt(i);
+    h |= 0;
+  }
+  return h;
+}
+
 async function findOrCreateContact(
   db: SupabaseClient,
   accountId: string,
@@ -771,8 +808,11 @@ async function findOrCreateContact(
   if (existing) {
     const patch: Record<string, unknown> = {};
     if (name && name !== existing.name) patch.name = name;
-    // Preenche a foto se o contato ainda não tem (ou mudou).
-    if (avatarUrl && avatarUrl !== existing.avatar_url) patch.avatar_url = avatarUrl;
+    // Só preenche a foto quando o contato AINDA não tem (evita re-espelhar
+    // a cada mensagem, já que a URL do WhatsApp muda sempre).
+    if (avatarUrl && !existing.avatar_url) {
+      patch.avatar_url = await mirrorAvatarToB2(avatarUrl, accountId);
+    }
     // Marca como grupo se ainda não estiver marcado.
     if (isGroup && !existing.is_group) patch.is_group = true;
     if (Object.keys(patch).length > 0) {
@@ -782,6 +822,9 @@ async function findOrCreateContact(
     return existing;
   }
 
+  const finalAvatar = avatarUrl
+    ? await mirrorAvatarToB2(avatarUrl, accountId)
+    : null;
   const { data: newContact, error: createError } = await db
     .from("contacts")
     .insert({
@@ -789,7 +832,7 @@ async function findOrCreateContact(
       user_id: configOwnerUserId,
       phone,
       name: name || phone,
-      avatar_url: avatarUrl,
+      avatar_url: finalAvatar,
       is_group: isGroup,
     })
     .select()
