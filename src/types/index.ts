@@ -158,6 +158,8 @@ export interface Conversation {
   last_message_text?: string;
   last_message_at?: string;
   unread_count: number;
+  /** Conversa arquivada — some da lista principal, mesmo com mensagem nova. */
+  archived?: boolean;
   created_at: string;
   updated_at: string;
   contact?: Contact;

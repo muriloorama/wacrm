@@ -12,6 +12,7 @@ import type {
   DealStatus,
   PipelineStage,
   Profile,
+  Tag,
 } from "@/types";
 import {
   Sheet,
@@ -24,12 +25,20 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
+import {
   Check,
   X,
   Trash2,
   MessageSquare,
   DollarSign,
   Loader2,
+  Tag as TagIcon,
+  Plus,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -68,6 +77,11 @@ export function DealForm({
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [linkedConversation, setLinkedConversation] =
     useState<Conversation | null>(null);
+
+  // Etiquetas do contato vinculado ao negócio
+  const [tags, setTags] = useState<(Tag & { contact_tag_id: string })[]>([]);
+  const [allTags, setAllTags] = useState<Tag[]>([]);
+  const [savingTag, setSavingTag] = useState(false);
 
   const [saving, setSaving] = useState(false);
   const [statusAction, setStatusAction] = useState<DealStatus | null>(null);
@@ -148,6 +162,75 @@ export function DealForm({
       cancelled = true;
     };
   }, [open, contactId, supabase]);
+
+  // Carrega as etiquetas do contato e todas as etiquetas da conta.
+  // As chamadas setState rodam dentro do callback async, não no corpo
+  // síncrono do effect.
+  useEffect(() => {
+    if (!open || !contactId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setTags([]);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setAllTags([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const [tagsRes, allTagsRes] = await Promise.all([
+        supabase
+          .from("contact_tags")
+          .select("id, tag_id, tags(*)")
+          .eq("contact_id", contactId),
+        supabase.from("tags").select("*").order("name"),
+      ]);
+      if (cancelled) return;
+      if (allTagsRes.data) setAllTags(allTagsRes.data as Tag[]);
+      if (tagsRes.data) {
+        const mapped = tagsRes.data
+          .filter((ct: Record<string, unknown>) => ct.tags)
+          .map((ct: Record<string, unknown>) => ({
+            ...(ct.tags as Tag),
+            contact_tag_id: ct.id as string,
+          }));
+        setTags(mapped);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, contactId, supabase]);
+
+  async function handleAddTag(tag: Tag) {
+    if (!contactId) return;
+    setSavingTag(true);
+    const { data, error } = await supabase
+      .from("contact_tags")
+      .insert({ contact_id: contactId, tag_id: tag.id })
+      .select("id")
+      .single();
+    if (error || !data) {
+      toast.error("Falha ao adicionar etiqueta");
+    } else {
+      setTags((prev) => [...prev, { ...tag, contact_tag_id: data.id }]);
+      toast.success("Etiqueta adicionada");
+    }
+    setSavingTag(false);
+  }
+
+  async function handleRemoveTag(contactTagId: string) {
+    setSavingTag(true);
+    const { error } = await supabase
+      .from("contact_tags")
+      .delete()
+      .eq("id", contactTagId);
+    if (error) {
+      toast.error("Falha ao remover etiqueta");
+    } else {
+      setTags((prev) => prev.filter((t) => t.contact_tag_id !== contactTagId));
+      toast.success("Etiqueta removida");
+    }
+    setSavingTag(false);
+  }
 
   async function handleSave() {
     if (!title.trim() || !contactId || !stageId) {
@@ -374,6 +457,80 @@ export function DealForm({
               />
             </div>
 
+            {contactId && (
+              <div className="space-y-2 rounded-lg border border-border bg-muted/50 p-3">
+                <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                  <TagIcon className="h-3 w-3" />
+                  Etiquetas
+                </div>
+                <div className="flex flex-wrap items-center gap-1">
+                  {tags.length === 0 ? (
+                    <p className="px-1 text-xs text-muted-foreground">
+                      Nenhuma etiqueta
+                    </p>
+                  ) : (
+                    tags.map((tag) => (
+                      <span
+                        key={tag.contact_tag_id}
+                        className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
+                        style={{
+                          backgroundColor: `${tag.color}20`,
+                          color: tag.color,
+                        }}
+                      >
+                        {tag.name}
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveTag(tag.contact_tag_id)}
+                          disabled={savingTag}
+                          aria-label={`Remover etiqueta ${tag.name}`}
+                          className="rounded-full transition-opacity hover:opacity-70 disabled:opacity-50"
+                        >
+                          <X className="h-2.5 w-2.5" />
+                        </button>
+                      </span>
+                    ))
+                  )}
+                </div>
+
+                {(() => {
+                  const availableTags = allTags.filter(
+                    (t) => !tags.some((ct) => ct.id === t.id),
+                  );
+                  return (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger
+                        render={
+                          <button
+                            type="button"
+                            disabled={savingTag || availableTags.length === 0}
+                            className="inline-flex items-center gap-1 rounded-lg px-1 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+                          >
+                            <Plus className="h-3 w-3" />
+                            Adicionar etiqueta
+                          </button>
+                        }
+                      />
+                      <DropdownMenuContent align="start" className="max-h-60">
+                        {availableTags.map((tag) => (
+                          <DropdownMenuItem
+                            key={tag.id}
+                            onClick={() => handleAddTag(tag)}
+                          >
+                            <span
+                              className="h-2.5 w-2.5 rounded-full"
+                              style={{ backgroundColor: tag.color }}
+                            />
+                            {tag.name}
+                          </DropdownMenuItem>
+                        ))}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  );
+                })()}
+              </div>
+            )}
+
             {deal && (
               <div className="space-y-2 rounded-lg border border-border bg-muted/50 p-3">
                 <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
@@ -426,9 +583,10 @@ export function DealForm({
             )}
           </div>
 
-          <div className="border-t border-border/50 bg-popover/80 p-4">
+          <div className="border-t border-border bg-card p-3">
             <div className="flex gap-2">
               <Button
+                size="sm"
                 variant="outline"
                 onClick={() => onOpenChange(false)}
                 className="flex-1 border-border bg-transparent text-muted-foreground hover:bg-muted"
@@ -436,6 +594,7 @@ export function DealForm({
                 Cancelar
               </Button>
               <Button
+                size="sm"
                 onClick={handleSave}
                 disabled={saving || !title.trim() || !contactId || !stageId}
                 className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90"

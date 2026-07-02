@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { useAuth } from "@/hooks/use-auth";
 import {
   CONVERSATION_SELECT,
   matchesContactFilters,
@@ -18,6 +19,8 @@ import {
   Video,
   FileText,
   Check,
+  Archive,
+  ArchiveRestore,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -28,6 +31,7 @@ import {
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -44,6 +48,11 @@ import { Badge } from "@/components/ui/badge";
 type ChannelOption = { id: string; name: string };
 /** Valor do seletor quando nenhum canal específico está selecionado. */
 const ALL_CHANNELS = "all";
+
+/** Funil (pipeline) da conta para o filtro por funil. */
+type PipelineOption = { id: string; name: string };
+/** Valor do seletor quando nenhum funil específico está selecionado. */
+const ALL_PIPELINES = "all";
 
 interface ConversationListProps {
   activeConversationId: string | null;
@@ -80,7 +89,7 @@ const MEDIA_PREVIEWS: Record<
   "[documento]": { icon: FileText, label: "Documento" },
 };
 
-type InboxFilter = ConversationStatus | "all" | "unread";
+type InboxFilter = ConversationStatus | "all" | "unread" | "archived";
 
 const FILTER_OPTIONS: { label: string; value: InboxFilter }[] = [
   { label: "Todas", value: "all" },
@@ -88,6 +97,7 @@ const FILTER_OPTIONS: { label: string; value: InboxFilter }[] = [
   { label: "Abertas", value: "open" },
   { label: "Pendentes", value: "pending" },
   { label: "Fechadas", value: "closed" },
+  { label: "Arquivadas", value: "archived" },
 ];
 
 export function ConversationList({
@@ -115,6 +125,23 @@ export function ConversationList({
   // sem depender de um refetch/realtime do pai.
   const [contactTagOverrides, setContactTagOverrides] = useState<
     Record<string, string[]>
+  >({});
+  // Filtro por funil (pipeline). `null` = todos os funis. Quando um funil
+  // está selecionado, `pipelineContactIds` guarda os contact_ids que têm
+  // negócio (deal) nesse funil; só essas conversas passam no filtro.
+  const { accountId } = useAuth();
+  const [pipelines, setPipelines] = useState<PipelineOption[]>([]);
+  const [selectedPipelineId, setSelectedPipelineId] = useState<string | null>(
+    null,
+  );
+  const [pipelineContactIds, setPipelineContactIds] = useState<Set<string> | null>(
+    null,
+  );
+  // Overrides otimistas do estado `archived` das conversas, alterados pelo
+  // menu de contexto (botão direito). Chave = conversation_id → arquivada?
+  // Sobrepõem `conversation.archived` para refletir na hora, sem refetch.
+  const [archivedOverrides, setArchivedOverrides] = useState<
+    Record<string, boolean>
   >({});
 
   // Keep the latest callback in a ref so the fetch effect below can
@@ -215,6 +242,59 @@ export function ConversationList({
     };
   }, []);
 
+  // Funis (pipelines) da conta para o filtro por funil. Carregados uma vez;
+  // escopo por conta via account_id (RLS por conta também garante isso).
+  useEffect(() => {
+    if (!accountId) return;
+    const supabase = createClient();
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from("pipelines")
+        .select("id, name")
+        .eq("account_id", accountId)
+        .order("name");
+      if (!cancelled && data) {
+        setPipelines(
+          data.map((p) => ({
+            id: p.id as string,
+            name: (p.name as string) ?? "Funil",
+          })),
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [accountId]);
+
+  // Ao escolher um funil, busca os contact_ids com negócio (deal) nele e monta
+  // um Set. `null` quando nenhum funil está selecionado (filtro desligado).
+  useEffect(() => {
+    if (!selectedPipelineId) {
+      setPipelineContactIds(null);
+      return;
+    }
+    const supabase = createClient();
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from("deals")
+        .select("contact_id")
+        .eq("pipeline_id", selectedPipelineId);
+      if (cancelled) return;
+      const set = new Set<string>();
+      for (const d of data ?? []) {
+        const cid = d.contact_id as string | null;
+        if (cid) set.add(cid);
+      }
+      setPipelineContactIds(set);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedPipelineId]);
+
   // Company options are derived from the loaded conversations — there's no
   // separate companies table, and only companies with a live conversation
   // are worth offering as an inbox filter.
@@ -254,10 +334,28 @@ export function ConversationList({
       result = result.filter((c) => c.channel_id === selectedChannelId);
     }
 
-    if (filter === "unread") {
-      result = result.filter((c) => c.unread_count > 0);
-    } else if (filter !== "all") {
-      result = result.filter((c) => c.status === filter);
+    // Arquivadas: por padrão a lista NÃO as mostra — mesmo quando o realtime
+    // do pai injeta uma conversa arquivada que recebeu mensagem nova. Só o
+    // filtro "Arquivadas" as exibe (e aí mostra SOMENTE as arquivadas).
+    // Usa o override otimista quando existe, senão o valor da conversa.
+    const isArchived = (c: Conversation) =>
+      archivedOverrides[c.id] ?? c.archived ?? false;
+    if (filter === "archived") {
+      result = result.filter((c) => isArchived(c));
+    } else {
+      result = result.filter((c) => !isArchived(c));
+      if (filter === "unread") {
+        result = result.filter((c) => c.unread_count > 0);
+      } else if (filter !== "all") {
+        result = result.filter((c) => c.status === filter);
+      }
+    }
+
+    // Filtro por funil: só conversas cujo contato tem negócio no funil.
+    if (pipelineContactIds) {
+      result = result.filter(
+        (c) => c.contact_id != null && pipelineContactIds.has(c.contact_id),
+      );
     }
 
     // Contact-based filters (tags via OR logic, exact company match).
@@ -288,6 +386,8 @@ export function ConversationList({
     selectedTagIds,
     selectedCompany,
     selectedChannelId,
+    pipelineContactIds,
+    archivedOverrides,
   ]);
 
   const toggleTag = useCallback((id: string) => {
@@ -345,6 +445,39 @@ export function ConversationList({
     []
   );
 
+  /**
+   * Arquiva/desarquiva uma conversa (menu de contexto na lista). Atualiza a
+   * coluna `conversations.archived` e o override otimista para refletir já.
+   */
+  const toggleArchived = useCallback(
+    async (conversationId: string, nextArchived: boolean) => {
+      const supabase = createClient();
+      // Otimista: reflete já, reverte no erro.
+      setArchivedOverrides((prev) => ({
+        ...prev,
+        [conversationId]: nextArchived,
+      }));
+
+      const { error } = await supabase
+        .from("conversations")
+        .update({ archived: nextArchived })
+        .eq("id", conversationId);
+
+      if (error) {
+        setArchivedOverrides((prev) => ({
+          ...prev,
+          [conversationId]: !nextArchived,
+        }));
+        toast.error(
+          nextArchived
+            ? "Falha ao arquivar conversa"
+            : "Falha ao desarquivar conversa",
+        );
+      }
+    },
+    [],
+  );
+
   const clearContactFilters = useCallback(() => {
     setSelectedTagIds([]);
     setSelectedCompany(null);
@@ -392,6 +525,29 @@ export function ConversationList({
               {channels.map((ch) => (
                 <SelectItem key={ch.id} value={ch.id}>
                   {ch.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+
+        {/* Filtro por funil (pipeline). Só aparece quando há funis na conta.
+            "Todos os funis" limpa o filtro. */}
+        {pipelines.length > 0 && (
+          <Select
+            value={selectedPipelineId ?? ALL_PIPELINES}
+            onValueChange={(v) =>
+              setSelectedPipelineId(v === ALL_PIPELINES ? null : v)
+            }
+          >
+            <SelectTrigger className="h-8 w-full border-border bg-muted text-sm text-foreground">
+              <SelectValue placeholder="Todos os funis" />
+            </SelectTrigger>
+            <SelectContent className="border-border bg-popover">
+              <SelectItem value={ALL_PIPELINES}>Todos os funis</SelectItem>
+              {pipelines.map((p) => (
+                <SelectItem key={p.id} value={p.id}>
+                  {p.name}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -593,6 +749,10 @@ export function ConversationList({
                 tags={tags}
                 contactTagIds={getContactTagIds(conv)}
                 onToggleContactTag={toggleContactTag}
+                isArchived={
+                  archivedOverrides[conv.id] ?? conv.archived ?? false
+                }
+                onToggleArchived={toggleArchived}
               />
             ))}
           </div>
@@ -618,6 +778,10 @@ interface ConversationItemProps {
     tagId: string,
     currentIds: string[]
   ) => void;
+  /** Se a conversa está arquivada (usado no rótulo do menu de contexto). */
+  isArchived: boolean;
+  /** Arquiva/desarquiva a conversa. */
+  onToggleArchived: (conversationId: string, nextArchived: boolean) => void;
 }
 
 function ConversationItem({
@@ -628,6 +792,8 @@ function ConversationItem({
   tags,
   contactTagIds,
   onToggleContactTag,
+  isArchived,
+  onToggleArchived,
 }: ConversationItemProps) {
   const contact = conversation.contact;
   const displayName = contact?.name || contact?.phone || "Desconhecido";
@@ -733,53 +899,75 @@ function ConversationItem({
       </div>
     </button>
 
-    {/* Menu de contexto (botão direito) → etiquetas do contato.
+    {/* Menu de contexto (botão direito) → etiquetas do contato + arquivar.
         DropdownMenu controlado, ancorado num ponto invisível (fixed) no
-        local do clique. Só faz sentido com um contato e etiquetas. */}
-    {contactId && tags.length > 0 && (
-      <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
-        <DropdownMenuTrigger
-          render={
-            <span
-              aria-hidden
-              className="pointer-events-none fixed"
-              style={{ left: menuPos.x, top: menuPos.y }}
-            />
-          }
-        />
-        <DropdownMenuContent
-          align="start"
-          className="max-h-64 w-56 overflow-y-auto border-border bg-popover"
+        local do clique. Arquivar está sempre disponível; etiquetas só com
+        um contato e etiquetas na conta. */}
+    <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+      <DropdownMenuTrigger
+        render={
+          <span
+            aria-hidden
+            className="pointer-events-none fixed"
+            style={{ left: menuPos.x, top: menuPos.y }}
+          />
+        }
+      />
+      <DropdownMenuContent
+        align="start"
+        className="max-h-64 w-56 overflow-y-auto border-border bg-popover"
+      >
+        {contactId && tags.length > 0 && (
+          <>
+            <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
+              Etiquetas
+            </div>
+            {tags.map((t) => {
+              const checked = contactTagIds.includes(t.id);
+              return (
+                <DropdownMenuItem
+                  key={t.id}
+                  onSelect={(e) => {
+                    // Mantém o menu aberto para alternar várias etiquetas.
+                    e.preventDefault();
+                    onToggleContactTag(contactId, t.id, contactTagIds);
+                  }}
+                  className="text-sm text-popover-foreground"
+                >
+                  <span className="flex flex-1 items-center gap-2">
+                    <span
+                      className="h-2 w-2 shrink-0 rounded-full"
+                      style={{ backgroundColor: t.color }}
+                    />
+                    <span className="truncate">{t.name}</span>
+                  </span>
+                  {checked && (
+                    <Check className="size-3.5 shrink-0 text-primary" />
+                  )}
+                </DropdownMenuItem>
+              );
+            })}
+            <DropdownMenuSeparator />
+          </>
+        )}
+        <DropdownMenuItem
+          onSelect={() => onToggleArchived(conversation.id, !isArchived)}
+          className="text-sm text-popover-foreground"
         >
-          <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
-            Etiquetas
-          </div>
-          {tags.map((t) => {
-            const checked = contactTagIds.includes(t.id);
-            return (
-              <DropdownMenuItem
-                key={t.id}
-                onSelect={(e) => {
-                  // Mantém o menu aberto para alternar várias etiquetas.
-                  e.preventDefault();
-                  onToggleContactTag(contactId, t.id, contactTagIds);
-                }}
-                className="text-sm text-popover-foreground"
-              >
-                <span className="flex flex-1 items-center gap-2">
-                  <span
-                    className="h-2 w-2 shrink-0 rounded-full"
-                    style={{ backgroundColor: t.color }}
-                  />
-                  <span className="truncate">{t.name}</span>
-                </span>
-                {checked && <Check className="size-3.5 shrink-0 text-primary" />}
-              </DropdownMenuItem>
-            );
-          })}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    )}
+          {isArchived ? (
+            <>
+              <ArchiveRestore className="size-3.5 shrink-0" />
+              <span>Desarquivar conversa</span>
+            </>
+          ) : (
+            <>
+              <Archive className="size-3.5 shrink-0" />
+              <span>Arquivar conversa</span>
+            </>
+          )}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
     </>
   );
 }

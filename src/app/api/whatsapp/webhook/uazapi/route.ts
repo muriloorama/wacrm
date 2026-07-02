@@ -180,6 +180,14 @@ async function processWebhook(body: UazapiWebhookBody) {
     data.reaction !== undefined ||
     Boolean(data.fileURL);
   if (looksLikeMessage) {
+    // Ignora mensagens de SISTEMA do gateway (grupo de status/serviço,
+    // broadcasts, etc.). Não devem virar contato/conversa/mensagem no CRM.
+    // Vale tanto para entrada quanto para saída (fromMe).
+    if (isSystemGatewayMessage(data)) {
+      console.log("[webhook] ignorando mensagem de sistema do gateway");
+      return;
+    }
+
     const instanceToken = channel.uazapi_instance_token
       ? decrypt(channel.uazapi_instance_token)
       : "";
@@ -198,6 +206,7 @@ async function processWebhook(body: UazapiWebhookBody) {
           data,
           avatarUrl,
           reaction,
+          instanceToken,
         );
         return;
       }
@@ -302,6 +311,7 @@ async function handleUazapiReaction(
   data: UazapiMessage,
   avatarUrl: string | null,
   reaction: { targetId: string; emoji: string },
+  instanceToken: string,
 ) {
   const phone = extractPhone(data);
   if (!phone) return;
@@ -319,6 +329,8 @@ async function handleUazapiReaction(
     contactName,
     avatarUrl,
     isGroupMsg,
+    data.chatid ?? "",
+    instanceToken,
   );
   if (!contact) return;
 
@@ -533,6 +545,42 @@ function extractPhone(data: UazapiMessage): string {
   return normalizePhone(withoutSuffix);
 }
 
+// JID do "grupo" de sistema/serviço do gateway. Mensagens vindas desse
+// chat (status, avisos internos) vazaram como contato no CRM — devem ser
+// ignoradas por completo.
+const GATEWAY_SYSTEM_JID = "120363028782550019";
+
+/**
+ * true quando a mensagem é do gateway (sistema), não de um cliente real:
+ * - telefone/chatid contém o JID de sistema do gateway;
+ * - chatid é `status@broadcast` ou termina com `@broadcast`;
+ * - o nome do contato/grupo/remetente denuncia o provedor interno.
+ * Nesses casos NÃO criamos contato/conversa/mensagem.
+ */
+function isSystemGatewayMessage(data: UazapiMessage): boolean {
+  const chatid = (data.chatid ?? "").toLowerCase();
+  const rawIds = [
+    data.chatid,
+    data.sender_pn,
+    data.sender,
+    extractPhone(data),
+  ]
+    .map((v) => (v ?? "").toLowerCase())
+    .join(" ");
+  if (rawIds.includes(GATEWAY_SYSTEM_JID)) return true;
+
+  if (chatid === "status@broadcast" || chatid.endsWith("@broadcast")) {
+    return true;
+  }
+
+  const names = [data.senderName, data.groupName]
+    .map((n) => (n ?? "").toLowerCase())
+    .join(" ");
+  if (names.includes("uazapi")) return true;
+
+  return false;
+}
+
 async function processMessage(
   db: SupabaseClient,
   accountId: string,
@@ -624,6 +672,8 @@ async function processMessage(
     contactName,
     avatarUrl,
     isGroupMsg,
+    data.chatid ?? "",
+    instanceToken,
   );
   if (!contact) return;
 
@@ -785,6 +835,69 @@ async function mirrorAvatarToB2(
   }
 }
 
+/**
+ * Busca a foto de perfil do contato/grupo DIRETO no gateway, quando o
+ * payload não a trouxe (típico de mensagens de ENTRADA). Usa o servidor do
+ * provedor + o token da instância do canal. Resiliente: qualquer falha
+ * (rede, timeout, formato) apenas devolve null — nunca quebra o webhook.
+ */
+async function fetchAvatarFromGateway(
+  chatid: string,
+  instanceToken: string,
+): Promise<string | null> {
+  const server = process.env.UAZAPI_SERVER_URL;
+  if (!server || !instanceToken || !chatid) return null;
+  const number = chatid.split("@")[0].replace(/\D/g, "");
+  if (!number) return null;
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    let res: Response;
+    try {
+      res = await fetch(`${server.replace(/\/+$/, "")}/chat/find`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          token: instanceToken,
+        },
+        body: JSON.stringify({
+          operator: "AND",
+          sort: "-messageTimestamp",
+          limit: 200,
+        }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!res.ok) return null;
+
+    const json = (await res.json()) as unknown;
+    const list: unknown[] = Array.isArray(json)
+      ? json
+      : json && typeof json === "object" && Array.isArray((json as { chats?: unknown }).chats)
+        ? ((json as { chats: unknown[] }).chats)
+        : [];
+
+    for (const item of list) {
+      if (!item || typeof item !== "object") continue;
+      const c = item as Record<string, unknown>;
+      const waChatid = String(
+        c.wa_chatid ?? c.chatid ?? c.id ?? "",
+      ).replace(/\D/g, "");
+      if (waChatid && waChatid.includes(number)) {
+        const img = c.imagePreview ?? c.image;
+        if (img) return String(img);
+      }
+    }
+    return null;
+  } catch (err) {
+    console.error("[uazapi-webhook] falha ao buscar foto no gateway:", err);
+    return null;
+  }
+}
+
 /** Hash simples e determinístico (sem depender de Math.random/Date). */
 function hashString(s: string): number {
   let h = 0;
@@ -803,15 +916,24 @@ async function findOrCreateContact(
   name: string,
   avatarUrl: string | null,
   isGroup = false,
+  chatid = "",
+  instanceToken = "",
 ): Promise<ContactRow | null> {
   const existing = await findExistingContact(db, accountId, phone);
   if (existing) {
     const patch: Record<string, unknown> = {};
     if (name && name !== existing.name) patch.name = name;
     // Só preenche a foto quando o contato AINDA não tem (evita re-espelhar
-    // a cada mensagem, já que a URL do WhatsApp muda sempre).
-    if (avatarUrl && !existing.avatar_url) {
-      patch.avatar_url = await mirrorAvatarToB2(avatarUrl, accountId);
+    // a cada mensagem, já que a URL do WhatsApp muda sempre). Se o payload
+    // não trouxe foto (típico de ENTRADA), tenta buscá-la no gateway.
+    if (!existing.avatar_url) {
+      let sourceAvatar = avatarUrl;
+      if (!sourceAvatar && instanceToken) {
+        sourceAvatar = await fetchAvatarFromGateway(chatid, instanceToken);
+      }
+      if (sourceAvatar) {
+        patch.avatar_url = await mirrorAvatarToB2(sourceAvatar, accountId);
+      }
     }
     // Marca como grupo se ainda não estiver marcado.
     if (isGroup && !existing.is_group) patch.is_group = true;
@@ -822,8 +944,14 @@ async function findOrCreateContact(
     return existing;
   }
 
-  const finalAvatar = avatarUrl
-    ? await mirrorAvatarToB2(avatarUrl, accountId)
+  // Contato novo: usa a foto do payload; se não veio, busca no gateway
+  // antes de desistir (para a foto já aparecer na 1ª mensagem de entrada).
+  let sourceAvatar = avatarUrl;
+  if (!sourceAvatar && instanceToken) {
+    sourceAvatar = await fetchAvatarFromGateway(chatid, instanceToken);
+  }
+  const finalAvatar = sourceAvatar
+    ? await mirrorAvatarToB2(sourceAvatar, accountId)
     : null;
   const { data: newContact, error: createError } = await db
     .from("contacts")
