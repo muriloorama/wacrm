@@ -20,7 +20,19 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
+
+/** Canal de WhatsApp para o seletor de caixa de entrada. */
+type ChannelOption = { id: string; name: string };
+/** Valor do seletor quando nenhum canal específico está selecionado. */
+const ALL_CHANNELS = "all";
 
 interface ConversationListProps {
   activeConversationId: string | null;
@@ -68,6 +80,9 @@ export function ConversationList({
   const [tags, setTags] = useState<Tag[]>([]);
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
   const [selectedCompany, setSelectedCompany] = useState<string | null>(null);
+  // Seletor de caixa de entrada por canal de WhatsApp. `null` = todos os canais.
+  const [channels, setChannels] = useState<ChannelOption[]>([]);
+  const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
 
   // Keep the latest callback in a ref so the fetch effect below can
   // have a stable, empty-dep identity. Previously the fetch useCallback
@@ -91,10 +106,18 @@ export function ConversationList({
     let cancelled = false;
 
     (async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("conversations")
         .select(CONVERSATION_SELECT)
         .order("last_message_at", { ascending: false });
+
+      // Escopo por canal: quando um canal específico está selecionado, carrega
+      // só as conversas dele. "Todos os canais" (null) mantém a consulta ampla.
+      if (selectedChannelId) {
+        query = query.eq("channel_id", selectedChannelId);
+      }
+
+      const { data, error } = await query;
 
       if (cancelled) return;
 
@@ -120,7 +143,30 @@ export function ConversationList({
     // `resyncToken` is included so the parent can force a refetch when
     // the realtime channel reconnects or the tab regains focus — catches
     // up on any events sent while the WS was disconnected or throttled.
-  }, [resyncToken]);
+    // `selectedChannelId` refetches (scoped) when the agent switches the
+    // inbox channel selector.
+  }, [resyncToken, selectedChannelId]);
+
+  // Carrega os canais da conta para o seletor de caixa de entrada. Lido
+  // direto de whatsapp_channels (RLS por conta) — leve, sem tocar o provedor.
+  useEffect(() => {
+    const supabase = createClient();
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from("whatsapp_channels")
+        .select("id, name")
+        .order("created_at", { ascending: true });
+      if (!cancelled && data) {
+        setChannels(
+          data.map((c) => ({ id: c.id as string, name: (c.name as string) ?? "Canal" })),
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Tag definitions for the filter picker — loaded once so labels/colours
   // stay stable regardless of which conversations happen to be loaded.
@@ -157,6 +203,13 @@ export function ConversationList({
   const filtered = useMemo(() => {
     let result = conversations;
 
+    // Guarda por canal também no cliente: o realtime do pai anexa conversas
+    // de qualquer canal ao estado, então filtramos aqui para não vazar
+    // conversas de outro canal quando um específico está selecionado.
+    if (selectedChannelId) {
+      result = result.filter((c) => c.channel_id === selectedChannelId);
+    }
+
     if (filter === "unread") {
       result = result.filter((c) => c.unread_count > 0);
     } else if (filter !== "all") {
@@ -184,7 +237,14 @@ export function ConversationList({
     }
 
     return result;
-  }, [conversations, filter, search, selectedTagIds, selectedCompany]);
+  }, [
+    conversations,
+    filter,
+    search,
+    selectedTagIds,
+    selectedCompany,
+    selectedChannelId,
+  ]);
 
   const toggleTag = useCallback((id: string) => {
     setSelectedTagIds((prev) =>
@@ -222,6 +282,29 @@ export function ConversationList({
     <div className="flex h-full w-full flex-col border-r border-border bg-card lg:w-80">
       {/* Search + Filter */}
       <div className="space-y-2 border-b border-border p-3">
+        {/* Seletor de caixa de entrada por canal. Só aparece quando há mais
+            de um canal — com um único canal, filtrar não faz diferença. */}
+        {channels.length > 1 && (
+          <Select
+            value={selectedChannelId ?? ALL_CHANNELS}
+            onValueChange={(v) =>
+              setSelectedChannelId(v === ALL_CHANNELS ? null : v)
+            }
+          >
+            <SelectTrigger className="h-8 w-full border-border bg-muted text-sm text-foreground">
+              <SelectValue placeholder="Todos os canais" />
+            </SelectTrigger>
+            <SelectContent className="border-border bg-popover">
+              <SelectItem value={ALL_CHANNELS}>Todos os canais</SelectItem>
+              {channels.map((ch) => (
+                <SelectItem key={ch.id} value={ch.id}>
+                  {ch.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+
         <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input

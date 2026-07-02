@@ -2,7 +2,15 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { CheckCircle2, Loader2, QrCode, RefreshCw, XCircle } from 'lucide-react';
+import {
+  CheckCircle2,
+  Loader2,
+  Plus,
+  QrCode,
+  RefreshCw,
+  Trash2,
+  XCircle,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -12,14 +20,48 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
-type ConnectState = {
+// Um canal de WhatsApp (linha de whatsapp_channels + status ao vivo do provedor).
+type Channel = {
+  id: string;
+  name: string;
+  status: string;
+  connected: boolean;
+  phone?: string | null;
+  qrcode?: string;
+  paircode?: string;
+};
+
+type ConnectResponse = {
+  configured: boolean;
+  channels?: Channel[];
+  error?: string;
+};
+
+// Estado agregado reportado ao componente pai (usado para resolver o método
+// de conexão padrão ao abrir o painel de configurações).
+type StatusReport = {
   configured: boolean;
   hasInstance: boolean;
   connected: boolean;
-  instanceStatus?: string;
-  qrcode?: string;
-  paircode?: string;
+};
+
+// Dados do QR/pair code atualmente visível (canal recém-criado ou reconectado).
+type QrView = {
+  channelId: string;
+  name: string;
+  qrcode: string;
+  paircode: string;
+  connected: boolean;
 };
 
 const POLL_INTERVAL_MS = 3000;
@@ -27,19 +69,29 @@ const POLL_INTERVAL_MS = 3000;
 type UazapiConnectProps = {
   // Reporta o status da conexão por QR para o componente pai, que o usa
   // para decidir o método de conexão padrão ao abrir o painel.
-  onStatusChange?: (state: ConnectState | null) => void;
+  onStatusChange?: (state: StatusReport | null) => void;
 };
 
 export function UazapiConnect({ onStatusChange }: UazapiConnectProps) {
   const [loadingStatus, setLoadingStatus] = useState(true);
-  const [connecting, setConnecting] = useState(false);
-  const [state, setState] = useState<ConnectState | null>(null);
-  const [qrcode, setQrcode] = useState('');
-  const [paircode, setPaircode] = useState('');
-  // Kept in a ref so the polling loop always reads the latest value
-  // without re-subscribing the interval on every render.
+  const [configured, setConfigured] = useState<boolean | null>(null);
+  const [channels, setChannels] = useState<Channel[]>([]);
+
+  // Diálogo "Adicionar canal".
+  const [addOpen, setAddOpen] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [creating, setCreating] = useState(false);
+
+  // Diálogo do QR Code (para canal novo ou reconexão).
+  const [qrView, setQrView] = useState<QrView | null>(null);
+
+  // Ações por canal em andamento (reconectar/excluir), para desabilitar botões.
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  // O loop de polling lê sempre o valor mais recente via ref, sem recriar o
+  // intervalo a cada render.
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  // Mantém a callback mais recente sem forçar a recriação de fetchStatus.
+  const qrChannelIdRef = useRef<string | null>(null);
   const onStatusChangeRef = useRef(onStatusChange);
   onStatusChangeRef.current = onStatusChange;
 
@@ -50,60 +102,114 @@ export function UazapiConnect({ onStatusChange }: UazapiConnectProps) {
     }
   }, []);
 
-  const fetchStatus = useCallback(async (): Promise<ConnectState | null> => {
-    try {
-      const res = await fetch('/api/whatsapp/uazapi/connect', { method: 'GET' });
-      const data = (await res.json()) as ConnectState & { error?: string };
-      if (!res.ok) {
-        toast.error(data.error || 'Falha ao consultar o status da conexão via QR Code.');
-        onStatusChangeRef.current?.(null);
-        return null;
-      }
-      setState(data);
-      onStatusChangeRef.current?.(data);
-      return data;
-    } catch (err) {
-      console.error('qr status error:', err);
-      toast.error('Falha ao consultar o status da conexão via QR Code. Verifique a rede.');
+  const report = useCallback((data: ConnectResponse | null) => {
+    if (!data) {
       onStatusChangeRef.current?.(null);
-      return null;
+      return;
     }
+    const list = data.channels ?? [];
+    onStatusChangeRef.current?.({
+      configured: data.configured,
+      hasInstance: list.length > 0,
+      connected: list.some((c) => c.connected),
+    });
   }, []);
 
-  // Initial load: descobre se já existe instância / se está conectado.
+  const fetchChannels = useCallback(async (): Promise<ConnectResponse | null> => {
+    try {
+      const res = await fetch('/api/whatsapp/uazapi/connect', { method: 'GET' });
+      const data = (await res.json()) as ConnectResponse;
+      if (!res.ok) {
+        toast.error(data.error || 'Falha ao consultar os canais de WhatsApp.');
+        report(null);
+        return null;
+      }
+      setConfigured(data.configured);
+      setChannels(data.channels ?? []);
+      report(data);
+      return data;
+    } catch (err) {
+      console.error('channels status error:', err);
+      toast.error('Falha ao consultar os canais. Verifique a rede.');
+      report(null);
+      return null;
+    }
+  }, [report]);
+
+  // Carga inicial: lista os canais da conta.
   useEffect(() => {
     (async () => {
       setLoadingStatus(true);
-      await fetchStatus();
+      await fetchChannels();
       setLoadingStatus(false);
     })();
     return () => stopPolling();
-  }, [fetchStatus, stopPolling]);
+  }, [fetchChannels, stopPolling]);
 
-  const startPolling = useCallback(() => {
-    stopPolling();
-    pollingRef.current = setInterval(async () => {
-      const data = await fetchStatus();
-      if (data?.connected) {
-        stopPolling();
-        setQrcode('');
-        setPaircode('');
-        toast.success('Conectado com sucesso!');
-      } else if (data && (data.qrcode || data.paircode)) {
-        // O QR/pair code pode ser renovado pelo servidor — mantém o mais recente.
-        setQrcode(data.qrcode || '');
-        setPaircode(data.paircode || '');
-      }
-    }, POLL_INTERVAL_MS);
-  }, [fetchStatus, stopPolling]);
+  // Enquanto um QR está visível, faz polling até aquele canal conectar.
+  const startPolling = useCallback(
+    (channelId: string) => {
+      stopPolling();
+      qrChannelIdRef.current = channelId;
+      pollingRef.current = setInterval(async () => {
+        const data = await fetchChannels();
+        if (!data) return;
+        const target = (data.channels ?? []).find((c) => c.id === channelId);
+        if (!target) {
+          // Canal sumiu (excluído em outra aba) — encerra o QR.
+          stopPolling();
+          setQrView(null);
+          return;
+        }
+        if (target.connected) {
+          stopPolling();
+          setQrView((prev) =>
+            prev && prev.channelId === channelId
+              ? { ...prev, connected: true }
+              : prev,
+          );
+          toast.success('Canal conectado!');
+        } else {
+          // O QR/pair code pode ser renovado pelo servidor — mantém o mais recente.
+          setQrView((prev) =>
+            prev && prev.channelId === channelId
+              ? {
+                  ...prev,
+                  qrcode: target.qrcode || prev.qrcode,
+                  paircode: target.paircode || prev.paircode,
+                }
+              : prev,
+          );
+        }
+      }, POLL_INTERVAL_MS);
+    },
+    [fetchChannels, stopPolling],
+  );
 
-  async function handleConnect() {
-    setConnecting(true);
-    setQrcode('');
-    setPaircode('');
+  const openQrFor = useCallback(
+    (channelId: string, name: string, qrcode: string, paircode: string) => {
+      setQrView({ channelId, name, qrcode, paircode, connected: false });
+      startPolling(channelId);
+    },
+    [startPolling],
+  );
+
+  // ---- Adicionar canal ----
+  async function handleCreate() {
+    const name = newName.trim();
+    if (!name) {
+      toast.error('Digite um nome para o canal.');
+      return;
+    }
+    setCreating(true);
     try {
-      const res = await fetch('/api/whatsapp/uazapi/connect', { method: 'POST' });
+      const res = await fetch('/api/whatsapp/uazapi/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
       const data = (await res.json()) as {
+        channelId?: string;
         qrcode?: string;
         paircode?: string;
         connected?: boolean;
@@ -111,106 +217,314 @@ export function UazapiConnect({ onStatusChange }: UazapiConnectProps) {
       };
 
       if (!res.ok) {
-        toast.error(data.error || 'Falha ao gerar o QR Code.');
+        // 403 → limite de canais atingido (ou sem permissão).
+        toast.error(data.error || 'Falha ao criar o canal.');
+        return;
+      }
+
+      setAddOpen(false);
+      setNewName('');
+      await fetchChannels();
+
+      if (data.connected) {
+        toast.success('Canal conectado!');
+        return;
+      }
+      if (data.channelId && (data.qrcode || data.paircode)) {
+        toast.success('Escaneie o QR code com o WhatsApp para conectar.');
+        openQrFor(data.channelId, name, data.qrcode || '', data.paircode || '');
+      } else {
+        toast.error('O servidor não retornou um QR code. Tente reconectar o canal.');
+      }
+    } catch (err) {
+      console.error('create channel error:', err);
+      toast.error('Falha ao criar o canal. Verifique a rede e tente novamente.');
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  // ---- Reconectar canal (regenera QR) ----
+  async function handleReconnect(channel: Channel) {
+    setBusyId(channel.id);
+    try {
+      const res = await fetch('/api/whatsapp/uazapi/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channelId: channel.id }),
+      });
+      const data = (await res.json()) as {
+        channelId?: string;
+        qrcode?: string;
+        paircode?: string;
+        connected?: boolean;
+        error?: string;
+      };
+
+      if (!res.ok) {
+        toast.error(data.error || 'Falha ao reconectar o canal.');
         return;
       }
 
       if (data.connected) {
-        await fetchStatus();
-        toast.success('Já está conectado!');
+        await fetchChannels();
+        toast.success('Canal já está conectado!');
         return;
       }
-
-      if (data.qrcode) {
-        setQrcode(data.qrcode);
-        setPaircode('');
-      } else if (data.paircode) {
-        setPaircode(data.paircode);
-        setQrcode('');
-      }
-
       if (data.qrcode || data.paircode) {
         toast.success('Escaneie o QR code com o WhatsApp para conectar.');
-        startPolling();
+        openQrFor(channel.id, channel.name, data.qrcode || '', data.paircode || '');
       } else {
-        toast.error('O servidor não retornou um QR code. Tente atualizar o status.');
+        toast.error('O servidor não retornou um QR code. Tente novamente.');
       }
     } catch (err) {
-      console.error('qr connect error:', err);
-      toast.error('Falha ao gerar o QR Code. Verifique a rede e tente novamente.');
+      console.error('reconnect channel error:', err);
+      toast.error('Falha ao reconectar. Verifique a rede e tente novamente.');
     } finally {
-      setConnecting(false);
+      setBusyId(null);
     }
   }
 
-  async function handleRefresh() {
-    setLoadingStatus(true);
-    const data = await fetchStatus();
-    setLoadingStatus(false);
-    if (data?.connected) {
-      stopPolling();
-      setQrcode('');
-      setPaircode('');
+  // ---- Excluir canal ----
+  async function handleDelete(channel: Channel) {
+    if (
+      !confirm(
+        `Excluir o canal "${channel.name}"? Esta ação remove a conexão do WhatsApp deste canal.`,
+      )
+    ) {
+      return;
+    }
+    setBusyId(channel.id);
+    try {
+      const res = await fetch('/api/whatsapp/uazapi/connect', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channelId: channel.id }),
+      });
+      const data = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok) {
+        toast.error(data.error || 'Falha ao excluir o canal.');
+        return;
+      }
+      // Se o QR aberto era deste canal, encerra.
+      if (qrChannelIdRef.current === channel.id) {
+        stopPolling();
+        setQrView(null);
+      }
+      toast.success('Canal excluído.');
+      await fetchChannels();
+    } catch (err) {
+      console.error('delete channel error:', err);
+      toast.error('Falha ao excluir o canal. Verifique a rede e tente novamente.');
+    } finally {
+      setBusyId(null);
     }
   }
 
-  // O provedor não está configurado no servidor — não mostra a seção.
-  if (!loadingStatus && state && state.configured === false) {
+  function handleCloseQr() {
+    stopPolling();
+    qrChannelIdRef.current = null;
+    setQrView(null);
+    void fetchChannels();
+  }
+
+  // O provedor não está configurado no servidor — não renderiza nada.
+  if (!loadingStatus && configured === false) {
     return null;
   }
 
-  const connected = Boolean(state?.connected);
-  const showQrArea = !connected && (Boolean(qrcode) || Boolean(paircode));
+  const qrSrc = (qr: string) =>
+    qr.startsWith('data:') ? qr : `data:image/png;base64,${qr}`;
 
   return (
     <Card>
       <CardHeader>
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <div>
-            <CardTitle className="text-foreground">Conexão via QR Code</CardTitle>
+            <CardTitle className="text-foreground">
+              Canais de WhatsApp (QR Code)
+            </CardTitle>
             <CardDescription className="text-muted-foreground">
-              Conecte um número do WhatsApp escaneando um QR code — sem precisar da
-              API oficial da Meta.
+              Conecte um ou mais números do WhatsApp escaneando um QR code — cada
+              canal funciona como uma caixa de entrada separada.
             </CardDescription>
           </div>
-          {loadingStatus && !state ? (
-            <Badge variant="outline" className="gap-1">
-              <Loader2 className="size-3 animate-spin" />
-              Verificando...
-            </Badge>
-          ) : connected ? (
-            <Badge variant="default" className="gap-1">
-              <CheckCircle2 className="size-3" />
-              Conectado
-            </Badge>
-          ) : (
-            <Badge variant="outline" className="gap-1 text-red-400 border-red-900">
-              <XCircle className="size-3" />
-              Desconectado
-            </Badge>
-          )}
+          <Button
+            onClick={() => {
+              setNewName('');
+              setAddOpen(true);
+            }}
+            className="bg-primary hover:bg-primary/90 text-primary-foreground"
+          >
+            <Plus className="size-4" />
+            Adicionar canal
+          </Button>
         </div>
       </CardHeader>
-      <CardContent className="space-y-4">
-        {connected ? (
-          <div className="flex items-center gap-2 rounded-md border border-emerald-700/50 bg-emerald-950/30 px-3 py-2 text-sm text-emerald-200">
-            <CheckCircle2 className="size-4 text-emerald-400 shrink-0" />
-            Conectado com sucesso. Seu número do WhatsApp está pronto para uso.
+
+      <CardContent className="space-y-3">
+        {loadingStatus && configured === null ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="size-5 animate-spin text-primary" />
+          </div>
+        ) : channels.length === 0 ? (
+          <div className="rounded-md border border-dashed border-border bg-muted/30 px-4 py-8 text-center">
+            <QrCode className="mx-auto mb-2 size-6 text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">
+              Nenhum canal ainda. Clique em <strong>Adicionar canal</strong> para
+              conectar um número do WhatsApp.
+            </p>
           </div>
         ) : (
-          <p className="text-sm text-muted-foreground">
-            Clique em <strong>Gerar QR</strong> e escaneie com o WhatsApp
-            (Aparelhos conectados) para vincular seu número.
-          </p>
-        )}
+          <ul className="space-y-2">
+            {channels.map((channel) => (
+              <li
+                key={channel.id}
+                className="flex items-center justify-between gap-3 rounded-md border border-border bg-card px-3 py-2.5"
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate font-medium text-foreground">
+                      {channel.name}
+                    </span>
+                    {channel.connected ? (
+                      <Badge variant="default" className="gap-1">
+                        <CheckCircle2 className="size-3" />
+                        Conectado
+                      </Badge>
+                    ) : (
+                      <Badge
+                        variant="outline"
+                        className="gap-1 text-red-400 border-red-900"
+                      >
+                        <XCircle className="size-3" />
+                        Desconectado
+                      </Badge>
+                    )}
+                  </div>
+                  {channel.phone && (
+                    <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                      {channel.phone}
+                    </p>
+                  )}
+                </div>
 
-        {showQrArea && (
-          <div className="flex flex-col items-center gap-3 rounded-md border border-border bg-muted/40 p-4">
-            {qrcode ? (
+                <div className="flex shrink-0 items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleReconnect(channel)}
+                    disabled={busyId === channel.id}
+                    className="border-border text-muted-foreground hover:text-foreground hover:bg-muted"
+                  >
+                    {busyId === channel.id ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="size-4" />
+                    )}
+                    Reconectar
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleDelete(channel)}
+                    disabled={busyId === channel.id}
+                    className="border-red-900 text-red-400 hover:text-red-300 hover:bg-red-950/40"
+                  >
+                    <Trash2 className="size-4" />
+                    Excluir
+                  </Button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+
+      {/* Diálogo: adicionar canal (pede o nome) */}
+      <Dialog open={addOpen} onOpenChange={(o) => !creating && setAddOpen(o)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Adicionar canal</DialogTitle>
+            <DialogDescription>
+              Dê um nome para identificar este canal (ex.: &quot;Vendas&quot;,
+              &quot;Suporte&quot;).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Input
+              autoFocus
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !creating) {
+                  e.preventDefault();
+                  handleCreate();
+                }
+              }}
+              placeholder="Nome do canal"
+              maxLength={60}
+              className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setAddOpen(false)}
+              disabled={creating}
+              className="border-border text-muted-foreground hover:text-foreground hover:bg-muted"
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleCreate}
+              disabled={creating}
+              className="bg-primary hover:bg-primary/90 text-primary-foreground"
+            >
+              {creating ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  Criando...
+                </>
+              ) : (
+                <>
+                  <QrCode className="size-4" />
+                  Criar e gerar QR
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Diálogo: QR Code (canal novo ou reconexão) */}
+      <Dialog
+        open={qrView !== null}
+        onOpenChange={(o) => {
+          if (!o) handleCloseQr();
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{qrView?.name ?? 'Conectar canal'}</DialogTitle>
+            <DialogDescription>
+              {qrView?.connected
+                ? 'Canal conectado com sucesso.'
+                : 'Abra o WhatsApp no celular → Aparelhos conectados → Conectar um aparelho e escaneie o código.'}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex flex-col items-center gap-3 py-2">
+            {qrView?.connected ? (
+              <div className="flex items-center gap-2 rounded-md border border-emerald-700/50 bg-emerald-950/30 px-3 py-2 text-sm text-emerald-200">
+                <CheckCircle2 className="size-4 text-emerald-400 shrink-0" />
+                Canal conectado. Seu número do WhatsApp está pronto para uso.
+              </div>
+            ) : qrView?.qrcode ? (
               <>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
-                  src={qrcode.startsWith('data:') ? qrcode : `data:image/png;base64,${qrcode}`}
+                  src={qrSrc(qrView.qrcode)}
                   alt="QR code para conectar o WhatsApp"
                   className="size-56 rounded bg-white p-2"
                 />
@@ -219,61 +533,37 @@ export function UazapiConnect({ onStatusChange }: UazapiConnectProps) {
                   Aguardando a leitura do QR code...
                 </p>
               </>
-            ) : (
+            ) : qrView?.paircode ? (
               <>
                 <p className="text-sm text-muted-foreground">
                   Digite este código no seu WhatsApp:
                 </p>
                 <p className="font-mono text-2xl font-bold tracking-widest text-foreground">
-                  {paircode}
+                  {qrView.paircode}
                 </p>
                 <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   <Loader2 className="size-3 animate-spin" />
                   Aguardando a confirmação...
                 </p>
               </>
+            ) : (
+              <div className="flex items-center py-6">
+                <Loader2 className="size-5 animate-spin text-primary" />
+              </div>
             )}
           </div>
-        )}
 
-        <div className="flex flex-wrap gap-3">
-          <Button
-            onClick={handleConnect}
-            disabled={connecting || connected}
-            className="bg-primary hover:bg-primary/90 text-primary-foreground"
-          >
-            {connecting ? (
-              <>
-                <Loader2 className="size-4 animate-spin" />
-                Gerando QR...
-              </>
-            ) : (
-              <>
-                <QrCode className="size-4" />
-                {qrcode || paircode ? 'Gerar novo QR' : 'Gerar QR'}
-              </>
-            )}
-          </Button>
-          <Button
-            variant="outline"
-            onClick={handleRefresh}
-            disabled={loadingStatus}
-            className="border-border text-muted-foreground hover:text-foreground hover:bg-muted"
-          >
-            {loadingStatus ? (
-              <>
-                <Loader2 className="size-4 animate-spin" />
-                Atualizando...
-              </>
-            ) : (
-              <>
-                <RefreshCw className="size-4" />
-                Atualizar status
-              </>
-            )}
-          </Button>
-        </div>
-      </CardContent>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={handleCloseQr}
+              className="border-border text-muted-foreground hover:text-foreground hover:bg-muted"
+            >
+              {qrView?.connected ? 'Fechar' : 'Cancelar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
