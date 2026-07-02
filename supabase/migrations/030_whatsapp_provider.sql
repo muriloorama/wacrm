@@ -19,3 +19,7 @@ ALTER TABLE whatsapp_config
 ALTER TABLE whatsapp_config
   ADD CONSTRAINT whatsapp_config_provider_check
   CHECK (provider IN ('meta', 'uazapi'));
+
+-- Config só-uazapi não tem credenciais da Meta: tornar opcionais.
+ALTER TABLE whatsapp_config ALTER COLUMN phone_number_id DROP NOT NULL;
+ALTER TABLE whatsapp_config ALTER COLUMN access_token DROP NOT NULL;
