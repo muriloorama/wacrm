@@ -49,6 +49,13 @@ interface UazapiMessage {
 }
 
 interface UazapiWebhookBody {
+  // Formato REAL entregue pelo uazapi:
+  EventType?: string; // ex.: "messages", "messages_update"
+  instanceName?: string; // nós criamos como "account-<accountId>"
+  token?: string;
+  owner?: string;
+  message?: UazapiMessage;
+  // Aliases tolerados (spec / variações):
   event?: string;
   instance?: string;
   data?: UazapiMessage;
@@ -86,41 +93,53 @@ export async function POST(request: Request) {
 }
 
 async function processWebhook(body: UazapiWebhookBody) {
-  const event = body.event;
-  const instanceId = body.instance ?? body.data?.instance;
-  const data = body.data;
+  const event = body.EventType ?? body.event;
+  const data = body.message ?? body.data;
+  const instanceName = body.instanceName ?? body.instance ?? "";
 
-  // Log de diagnóstico (aparece nos logs da Vercel) para conferir o
-  // formato REAL do payload entregue pelo uazapi.
   console.log(
-    "[uazapi-webhook] recebido — event:",
+    "[uazapi-webhook] EventType:",
     event,
-    "| instance:",
-    instanceId,
-    "| data keys:",
-    data ? Object.keys(data).join(",") : "(sem data)",
+    "| instanceName:",
+    instanceName,
+    "| tem message:",
+    Boolean(data),
   );
 
-  if (!instanceId || !data) return;
+  if (!data) return;
 
-  // 1) Resolver a conta pela instância.
   const db = supabaseAdmin();
-  const { data: config, error: configError } = await db
-    .from("whatsapp_config")
-    .select("id, account_id, user_id")
-    .eq("uazapi_instance_id", instanceId)
-    .maybeSingle();
 
-  if (configError) {
-    console.error(
-      "[uazapi-webhook] erro ao buscar whatsapp_config para instância:",
-      instanceId,
-      configError,
-    );
-    return;
+  // 1) Resolver a conta. Criamos a instância com nome "account-<accountId>",
+  // então extraímos o accountId do instanceName. (Fallback: casar por
+  // uazapi_instance_id, caso o payload traga a instância dentro da mensagem.)
+  let config: { id: string; account_id: string; user_id: string } | null = null;
+  const accountId = instanceName.startsWith("account-")
+    ? instanceName.slice("account-".length)
+    : null;
+
+  if (accountId) {
+    const { data: byAccount } = await db
+      .from("whatsapp_config")
+      .select("id, account_id, user_id")
+      .eq("account_id", accountId)
+      .maybeSingle();
+    config = byAccount ?? null;
   }
+  if (!config && data.instance) {
+    const { data: byInstance } = await db
+      .from("whatsapp_config")
+      .select("id, account_id, user_id")
+      .eq("uazapi_instance_id", data.instance)
+      .maybeSingle();
+    config = byInstance ?? null;
+  }
+
   if (!config) {
-    // Instância desconhecida — ignora silenciosamente (200 no handler).
+    console.warn(
+      "[uazapi-webhook] conta não resolvida — instanceName:",
+      instanceName,
+    );
     return;
   }
 
