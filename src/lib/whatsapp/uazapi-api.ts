@@ -149,11 +149,36 @@ export async function disconnectInstance(token: string): Promise<void> {
 
 // ---------- Webhook (instância) ----------
 
-/** Registra/atualiza o webhook da instância para receber mensagens. */
+/**
+ * Registra o webhook da instância para receber mensagens. Idempotente:
+ * remove webhooks já existentes antes de adicionar, para não duplicar as
+ * entregas (cada `connect` chamava `add` e acumulava webhooks iguais).
+ */
 export async function setInstanceWebhook(
   token: string,
   url: string,
 ): Promise<void> {
+  try {
+    const existing = await call<Array<{ id?: string }>>("/webhook", {
+      auth: "instance",
+      token,
+      method: "GET",
+    });
+    if (Array.isArray(existing)) {
+      for (const w of existing) {
+        if (w?.id) {
+          await call("/webhook", {
+            auth: "instance",
+            token,
+            body: { action: "delete", id: w.id },
+          });
+        }
+      }
+    }
+  } catch {
+    // se não der para limpar, segue adicionando (melhor ter webhook do que não ter)
+  }
+
   await call("/webhook", {
     auth: "instance",
     token,

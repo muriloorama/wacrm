@@ -218,11 +218,19 @@ function mapContentType(messageType: string | undefined): string {
   return "text";
 }
 
-/** Extrai o telefone (só dígitos) do JID/sender_pn. */
+/**
+ * Extrai o telefone (só dígitos) do contato. Prioriza `sender_pn`
+ * (telefone explícito) e o `chatid` (JID da conversa 1:1 = telefone do
+ * cliente). NUNCA usa `sender` quando for `@lid` — esse é o identificador
+ * de privacidade do WhatsApp (não é telefone).
+ */
 function extractPhone(data: UazapiMessage): string {
-  const raw = data.sender_pn || data.sender || "";
-  // Remove o sufixo do JID ("@s.whatsapp.net", "@c.us", "@g.us"...) e,
-  // por segurança, qualquer caractere não numérico.
+  let raw = data.sender_pn || data.chatid || "";
+  if (!raw && data.sender && !data.sender.includes("@lid")) {
+    raw = data.sender;
+  }
+  // Remove o sufixo do JID ("@s.whatsapp.net", "@c.us", "@g.us", "@lid")
+  // e, por segurança, qualquer caractere não numérico.
   const withoutSuffix = raw.split("@")[0] ?? "";
   return normalizePhone(withoutSuffix);
 }
@@ -242,7 +250,12 @@ async function processMessage(
 
   const contactName = data.senderName || phone;
   const contentType = mapContentType(data.messageType);
-  const contentText = data.text ? data.text : null;
+  const contentText =
+    data.text ||
+    (data.content && typeof data.content === "object" && "text" in data.content
+      ? String((data.content as { text?: unknown }).text ?? "")
+      : "") ||
+    null;
   const mediaUrl = data.fileURL ? data.fileURL : null;
 
   // findOrCreate contato (account-scoped, por telefone).
@@ -263,6 +276,20 @@ async function processMessage(
     contact.id,
   );
   if (!conversation) return;
+
+  // Idempotência: o uazapi pode entregar o mesmo evento mais de uma vez
+  // (webhooks duplicados / reenvios). Se a mensagem já existe nesta
+  // conversa, não insere de novo.
+  if (data.messageid) {
+    const { data: dup } = await db
+      .from("messages")
+      .select("id")
+      .eq("conversation_id", conversation.id)
+      .eq("message_id", data.messageid)
+      .limit(1)
+      .maybeSingle();
+    if (dup) return;
+  }
 
   // Timestamp do WhatsApp vem em ms; cai para "agora" se ausente.
   const createdAt = data.messageTimestamp
