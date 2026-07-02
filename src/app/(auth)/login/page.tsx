@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import { translateAuthError } from "@/lib/auth/auth-errors";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import {
   Card,
@@ -68,17 +69,16 @@ function LoginPageInner() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <Card className="w-full max-w-md border-border bg-card">
-        <CardHeader className="items-center text-center">
-          <BrandLogo className="mb-3 h-10" />
-          <CardTitle className="text-xl text-foreground">
+    <Card className="w-full max-w-md rounded-2xl border-border/60 bg-card/80 shadow-2xl backdrop-blur-xl">
+        <CardHeader className="items-center gap-1 text-center">
+          <BrandLogo className="mb-2 h-12" />
+          <CardTitle className="text-2xl font-semibold text-foreground">
             {inviteToken ? "Entre para aceitar" : "Bem-vindo de volta"}
           </CardTitle>
           <CardDescription className="text-muted-foreground">
             {inviteToken
               ? "Entre e levaremos você até o convite."
-              : "Entre na sua conta"}
+              : "Entre na sua conta para continuar"}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -96,11 +96,11 @@ function LoginPageInner() {
               <Input
                 id="email"
                 type="email"
-                placeholder="you@example.com"
+                placeholder="voce@exemplo.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
-                className="border-border bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
+                className="h-11 border-border bg-muted/60 text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
               />
             </div>
 
@@ -116,21 +116,20 @@ function LoginPageInner() {
                   Esqueci a senha?
                 </Link>
               </div>
-              <Input
+              <PasswordInput
                 id="password"
-                type="password"
                 placeholder="Digite sua senha"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                className="border-border bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
+                className="h-11 border-border bg-muted/60 text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
               />
             </div>
 
             <Button
               type="submit"
               disabled={loading}
-              className="mt-2 h-10 w-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+              className="mt-2 h-11 w-full bg-primary text-primary-foreground shadow-lg shadow-primary/20 transition hover:bg-primary/90 disabled:opacity-50"
             >
               {loading ? "Entrando..." : "Entrar"}
             </Button>
@@ -144,13 +143,12 @@ function LoginPageInner() {
                   ? `/signup?invite=${encodeURIComponent(inviteToken)}`
                   : "/signup"
               }
-              className="text-primary hover:text-primary/80"
+              className="font-medium text-primary hover:text-primary/80"
             >
               Criar conta
             </Link>
           </p>
         </CardContent>
       </Card>
-    </div>
   );
 }

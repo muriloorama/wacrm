@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/card";
 import { CheckCircle } from "lucide-react";
 import { BrandLogo } from "@/components/brand-logo";
+import { PasswordInput } from "@/components/ui/password-input";
 
 // `useSearchParams` opts the component out of static prerendering
 // unless wrapped in Suspense — same pattern as /login.
@@ -93,13 +94,12 @@ function SignupPageInner() {
 
   if (success) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background px-4">
-        <Card className="w-full max-w-md border-border bg-card">
+        <Card className="w-full max-w-md rounded-2xl border-border/60 bg-card/80 shadow-2xl backdrop-blur-xl">
           <CardHeader className="items-center text-center">
             <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
               <CheckCircle className="h-6 w-6 text-primary" />
             </div>
-            <CardTitle className="text-xl text-foreground">
+            <CardTitle className="text-2xl font-semibold text-foreground">
               Verifique seu e-mail
             </CardTitle>
             <CardDescription className="text-muted-foreground">
@@ -125,16 +125,14 @@ function SignupPageInner() {
             </Link>
           </CardContent>
         </Card>
-      </div>
     );
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <Card className="w-full max-w-md border-border bg-card">
+      <Card className="w-full max-w-md rounded-2xl border-border/60 bg-card/80 shadow-2xl backdrop-blur-xl">
         <CardHeader className="items-center text-center">
-          <BrandLogo className="mb-3 h-10" />
-          <CardTitle className="text-xl text-foreground">
+          <BrandLogo className="mb-2 h-12" />
+          <CardTitle className="text-2xl font-semibold text-foreground">
             {inviteToken ? "Criar conta e entrar" : "Criar conta"}
           </CardTitle>
           <CardDescription className="text-muted-foreground">
@@ -162,7 +160,7 @@ function SignupPageInner() {
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
                 required
-                className="border-border bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
+                className="h-11 border-border bg-muted/60 text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
               />
             </div>
 
@@ -173,11 +171,11 @@ function SignupPageInner() {
               <Input
                 id="email"
                 type="email"
-                placeholder="you@example.com"
+                placeholder="voce@exemplo.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
-                className="border-border bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
+                className="h-11 border-border bg-muted/60 text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
               />
             </div>
 
@@ -185,14 +183,13 @@ function SignupPageInner() {
               <Label htmlFor="password" className="text-muted-foreground">
                 Senha
               </Label>
-              <Input
+              <PasswordInput
                 id="password"
-                type="password"
                 placeholder="No mínimo 6 caracteres"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                className="border-border bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
+                className="h-11 border-border bg-muted/60 text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
               />
             </div>
 
@@ -200,21 +197,20 @@ function SignupPageInner() {
               <Label htmlFor="confirmPassword" className="text-muted-foreground">
                 Confirmar senha
               </Label>
-              <Input
+              <PasswordInput
                 id="confirmPassword"
-                type="password"
                 placeholder="Repita sua senha"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 required
-                className="border-border bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
+                className="h-11 border-border bg-muted/60 text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
               />
             </div>
 
             <Button
               type="submit"
               disabled={loading}
-              className="mt-2 h-10 w-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+              className="mt-2 h-11 w-full bg-primary text-primary-foreground shadow-lg shadow-primary/20 transition hover:bg-primary/90 disabled:opacity-50"
             >
               {loading ? "Criando conta..." : "Criar conta"}
             </Button>
@@ -235,6 +231,5 @@ function SignupPageInner() {
           </p>
         </CardContent>
       </Card>
-    </div>
   );
 }

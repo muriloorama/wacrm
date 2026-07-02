@@ -45,13 +45,12 @@ export default function ForgotPasswordPage() {
 
   if (success) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background px-4">
-        <Card className="w-full max-w-md border-border bg-card">
+        <Card className="w-full max-w-md rounded-2xl border-border/60 bg-card/80 shadow-2xl backdrop-blur-xl">
           <CardHeader className="items-center text-center">
             <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
               <CheckCircle className="h-6 w-6 text-primary" />
             </div>
-            <CardTitle className="text-xl text-foreground">
+            <CardTitle className="text-2xl font-semibold text-foreground">
               Verifique seu e-mail
             </CardTitle>
             <CardDescription className="text-muted-foreground">
@@ -71,16 +70,14 @@ export default function ForgotPasswordPage() {
             </Link>
           </CardContent>
         </Card>
-      </div>
     );
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <Card className="w-full max-w-md border-border bg-card">
+      <Card className="w-full max-w-md rounded-2xl border-border/60 bg-card/80 shadow-2xl backdrop-blur-xl">
         <CardHeader className="items-center text-center">
-          <BrandLogo className="mb-3 h-10" />
-          <CardTitle className="text-xl text-foreground">Redefinir senha</CardTitle>
+          <BrandLogo className="mb-2 h-12" />
+          <CardTitle className="text-2xl font-semibold text-foreground">Redefinir senha</CardTitle>
           <CardDescription className="text-muted-foreground">
             Informe seu e-mail e enviaremos um link para redefinição
           </CardDescription>
@@ -100,18 +97,18 @@ export default function ForgotPasswordPage() {
               <Input
                 id="email"
                 type="email"
-                placeholder="you@example.com"
+                placeholder="voce@exemplo.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
-                className="border-border bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
+                className="h-11 border-border bg-muted/60 text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
               />
             </div>
 
             <Button
               type="submit"
               disabled={loading}
-              className="mt-2 h-10 w-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+              className="mt-2 h-11 w-full bg-primary text-primary-foreground shadow-lg shadow-primary/20 transition hover:bg-primary/90 disabled:opacity-50"
             >
               {loading ? "Enviando..." : "Enviar link de redefinição"}
             </Button>
@@ -126,6 +123,5 @@ export default function ForgotPasswordPage() {
           </Link>
         </CardContent>
       </Card>
-    </div>
   );
 }
