@@ -14,7 +14,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { MessageSquare, CheckCircle, ArrowLeft } from "lucide-react";
+import { CheckCircle, ArrowLeft } from "lucide-react";
+import { BrandLogo } from "@/components/brand-logo";
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
@@ -78,9 +79,7 @@ export default function ForgotPasswordPage() {
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <Card className="w-full max-w-md border-border bg-card">
         <CardHeader className="items-center text-center">
-          <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
-            <MessageSquare className="h-6 w-6 text-primary" />
-          </div>
+          <BrandLogo className="mb-3 h-10" />
           <CardTitle className="text-xl text-foreground">Redefinir senha</CardTitle>
           <CardDescription className="text-muted-foreground">
             Informe seu e-mail e enviaremos um link para redefinição

@@ -228,3 +228,14 @@ html[data-theme="rose"] {
     @apply font-sans;
   }
 }
+
+/* Logo da marca: alterna colorido (tema claro) / branco (tema escuro). */
+.brand-logo-dark {
+  display: none;
+}
+html[data-mode="dark"] .brand-logo-light {
+  display: none;
+}
+html[data-mode="dark"] .brand-logo-dark {
+  display: block;
+}

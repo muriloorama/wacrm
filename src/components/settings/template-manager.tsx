@@ -1115,8 +1115,8 @@ export function TemplateManager() {
             <DialogTitle className="text-popover-foreground">Excluir modelo?</DialogTitle>
             <DialogDescription className="text-muted-foreground">
               {templateToDelete?.meta_template_id
-                ? `"${templateToDelete?.name}" será excluído da Meta e do wacrm. Disparos ativos que usam este modelo começarão a falhar no próximo envio. Isso não pode ser desfeito.`
-                : `"${templateToDelete?.name}" será excluído do wacrm. Ele nunca foi enviado à Meta, então nenhuma limpeza remota é necessária.`}
+                ? `"${templateToDelete?.name}" será excluído da Meta e do Super CRM. Disparos ativos que usam este modelo começarão a falhar no próximo envio. Isso não pode ser desfeito.`
+                : `"${templateToDelete?.name}" será excluído do Super CRM. Ele nunca foi enviado à Meta, então nenhuma limpeza remota é necessária.`}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="bg-popover border-border">
