@@ -210,7 +210,7 @@ export function UazapiConnect({ onStatusChange }: UazapiConnectProps) {
               <>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
-                  src={`data:image/png;base64,${qrcode}`}
+                  src={qrcode.startsWith('data:') ? qrcode : `data:image/png;base64,${qrcode}`}
                   alt="QR code para conectar o WhatsApp"
                   className="size-56 rounded bg-white p-2"
                 />
