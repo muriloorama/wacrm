@@ -4,6 +4,7 @@ import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+import { translateAuthError } from "@/lib/auth/auth-errors";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -54,7 +55,7 @@ function LoginPageInner() {
     });
 
     if (error) {
-      setError(error.message);
+      setError(translateAuthError(error.message));
       setLoading(false);
       return;
     }
@@ -78,12 +79,12 @@ function LoginPageInner() {
             )}
           </div>
           <CardTitle className="text-xl text-foreground">
-            {inviteToken ? "Sign in to accept" : "Welcome back"}
+            {inviteToken ? "Entre para aceitar" : "Bem-vindo de volta"}
           </CardTitle>
           <CardDescription className="text-muted-foreground">
             {inviteToken
-              ? "Sign in and we'll take you to the invitation."
-              : "Sign in to your account"}
+              ? "Entre e levaremos você até o convite."
+              : "Entre na sua conta"}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -96,7 +97,7 @@ function LoginPageInner() {
 
             <div className="flex flex-col gap-2">
               <Label htmlFor="email" className="text-muted-foreground">
-                Email
+                E-mail
               </Label>
               <Input
                 id="email"
@@ -112,19 +113,19 @@ function LoginPageInner() {
             <div className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
                 <Label htmlFor="password" className="text-muted-foreground">
-                  Password
+                  Senha
                 </Label>
                 <Link
                   href="/forgot-password"
                   className="text-sm text-primary hover:text-primary/80"
                 >
-                  Forgot password?
+                  Esqueci a senha?
                 </Link>
               </div>
               <Input
                 id="password"
                 type="password"
-                placeholder="Enter your password"
+                placeholder="Digite sua senha"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
@@ -137,12 +138,12 @@ function LoginPageInner() {
               disabled={loading}
               className="mt-2 h-10 w-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
             >
-              {loading ? "Signing in..." : "Sign in"}
+              {loading ? "Entrando..." : "Entrar"}
             </Button>
           </form>
 
           <p className="mt-6 text-center text-sm text-muted-foreground">
-            Don&apos;t have an account?{" "}
+            Não tem uma conta?{" "}
             <Link
               href={
                 inviteToken
@@ -151,7 +152,7 @@ function LoginPageInner() {
               }
               className="text-primary hover:text-primary/80"
             >
-              Create account
+              Criar conta
             </Link>
           </p>
         </CardContent>

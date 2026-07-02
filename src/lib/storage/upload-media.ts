@@ -87,7 +87,7 @@ export async function uploadAccountMedia(
     error: userErr,
   } = await supabase.auth.getUser();
   if (userErr || !user) {
-    throw new Error("Not signed in.");
+    throw new Error("Você não está autenticado.");
   }
 
   // Resolve account_id so the path is account-scoped (matches the
@@ -99,7 +99,7 @@ export async function uploadAccountMedia(
     .eq("user_id", user.id)
     .maybeSingle();
   if (profileErr || !profile?.account_id) {
-    throw new Error("Could not resolve your account.");
+    throw new Error("Não foi possível identificar sua conta.");
   }
 
   const path = buildMediaPath(profile.account_id as string, file.name);
