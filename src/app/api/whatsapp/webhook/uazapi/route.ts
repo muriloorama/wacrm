@@ -195,19 +195,8 @@ async function processWebhook(body: UazapiWebhookBody) {
       return;
     }
 
-    // DIAGNÓSTICO (temporário): captura o payload BRUTO de qualquer mensagem
-    // que PAREÇA reação, para descobrirmos o formato real entregue pelo
-    // gateway. Nunca pode quebrar o processamento.
+    // Candidata a reação? Usado pelo guard abaixo (impede reação virar msg).
     const reactionCandidate = isReactionCandidate(data);
-    if (reactionCandidate) {
-      try {
-        await db
-          .from("webhook_debug")
-          .insert({ kind: "reaction_candidate", payload: body });
-      } catch (err) {
-        console.error("[uazapi-webhook] falha ao gravar webhook_debug:", err);
-      }
-    }
 
     const instanceToken = channel.uazapi_instance_token
       ? decrypt(channel.uazapi_instance_token)
