@@ -1,17 +1,15 @@
-import { createClient } from "@/lib/supabase/client";
-
 /**
- * Shared media-upload helper for Supabase Storage buckets that use the
- * account-scoped path convention introduced in migration 020
- * (`flow-media`) and reused by migration 023 (`chat-media`):
+ * Shared media-upload helper. O storage é o Backblaze B2 (S3-compatível,
+ * bucket público). O caminho segue a convenção com prefixo lógico +
+ * escopo de conta:
  *
  *   <bucket>/account-<account_id>/<timestamp>-<basename>.<ext>
  *
- * The first path segment (`account-<uuid>`) is what the bucket's RLS
- * write policies match on, so every caller MUST go through here rather
- * than hand-rolling a path — a mismatched segment is silently rejected
- * by RLS. Both the Flows builder (`node-config-form`) and the inbox
- * composer call this so the logic lives in exactly one place.
+ * O upload NÃO usa a chave do B2 no navegador: pede uma URL pré-assinada
+ * à rota `/api/media/presign` (que valida login + resolve a conta no
+ * servidor) e faz o PUT direto no B2. Tanto o builder de Fluxos
+ * (`node-config-form`) quanto o compositor do inbox chamam este helper,
+ * então a lógica vive em exatamente um lugar.
  */
 
 /** 16 MB — matches the `file_size_limit` on both buckets (migrations 016/020/023). */
@@ -69,69 +67,74 @@ export interface UploadAccountMediaResult {
 }
 
 /**
- * Upload a file to an account-scoped Storage bucket and return its public
- * URL. Throws with a user-facing message on auth / account-resolution /
- * upload failure — callers surface it via a toast.
+ * Faz upload de um arquivo para o bucket B2 (escopo de conta) e retorna
+ * a URL pública. Lança com mensagem amigável em falha de autenticação /
+ * resolução de conta / upload — os chamadores exibem via toast.
  *
- * Size validation is the caller's responsibility (limits can differ per
- * feature); `MEDIA_MAX_BYTES` is exported for the common case.
+ * A validação de tamanho é responsabilidade do chamador (limites variam
+ * por recurso); `MEDIA_MAX_BYTES` é exportado para o caso comum.
+ *
+ * `bucket` é um prefixo lógico ("chat-media" | "flow-media" | "avatars")
+ * que separa os arquivos dentro do bucket B2 físico.
  */
 export async function uploadAccountMedia(
   bucket: string,
   file: File,
 ): Promise<UploadAccountMediaResult> {
-  const supabase = createClient();
+  const contentType = file.type || "application/octet-stream";
 
-  const {
-    data: { user },
-    error: userErr,
-  } = await supabase.auth.getUser();
-  if (userErr || !user) {
-    throw new Error("Você não está autenticado.");
-  }
-
-  // Resolve account_id so the path is account-scoped (matches the
-  // bucket's RLS write policy from migration 020/023). User-scoped
-  // paths would be rejected.
-  const { data: profile, error: profileErr } = await supabase
-    .from("profiles")
-    .select("account_id")
-    .eq("user_id", user.id)
-    .maybeSingle();
-  if (profileErr || !profile?.account_id) {
-    throw new Error("Não foi possível identificar sua conta.");
-  }
-
-  const path = buildMediaPath(profile.account_id as string, file.name);
-  const { error: upErr } = await supabase.storage.from(bucket).upload(path, file, {
-    cacheControl: "3600",
-    upsert: false,
-    contentType: file.type,
+  // 1) Pede a URL pré-assinada ao servidor (auth + conta resolvidos lá).
+  const presignRes = await fetch("/api/media/presign", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      bucket,
+      fileName: file.name,
+      contentType,
+      size: file.size,
+    }),
   });
-  if (upErr) throw new Error(upErr.message);
+  if (!presignRes.ok) {
+    const data = (await presignRes.json().catch(() => null)) as
+      | { error?: string }
+      | null;
+    throw new Error(data?.error || "Não foi possível preparar o envio do arquivo.");
+  }
+  const { uploadUrl, publicUrl, path } = (await presignRes.json()) as {
+    uploadUrl: string;
+    publicUrl: string;
+    path: string;
+  };
 
-  const {
-    data: { publicUrl },
-  } = supabase.storage.from(bucket).getPublicUrl(path);
+  // 2) Sobe o arquivo direto no B2 com a URL pré-assinada.
+  const putRes = await fetch(uploadUrl, {
+    method: "PUT",
+    body: file,
+    headers: { "Content-Type": contentType },
+  });
+  if (!putRes.ok) {
+    throw new Error("Falha ao enviar o arquivo para o armazenamento.");
+  }
 
   return { publicUrl, path };
 }
 
 /**
- * Delete a previously-uploaded object. Used to GC media that was staged
- * (uploaded) but never sent — a cancelled draft or a failed Meta send —
- * so abandoned attachments don't accumulate in the public bucket. The
- * DELETE is gated by the same account-scoped RLS policy as the upload,
- * so a caller can only remove objects under their own account folder.
+ * Remove um objeto enviado anteriormente. Usado para limpar mídia que
+ * foi preparada (upload) mas nunca enviada — um rascunho cancelado ou um
+ * envio à Meta que falhou — para que anexos abandonados não se acumulem
+ * no bucket. A rota valida que o objeto pertence à conta do chamador.
  *
- * Best-effort: callers fire-and-forget and swallow errors (a missed
- * delete is a storage nit, not something to surface to the user).
+ * Best-effort: os chamadores disparam sem aguardar e engolem erros (uma
+ * remoção perdida é um detalhe de storage, não algo a mostrar ao usuário).
  */
 export async function deleteAccountMedia(
-  bucket: string,
+  _bucket: string,
   path: string,
 ): Promise<void> {
-  const supabase = createClient();
-  const { error } = await supabase.storage.from(bucket).remove([path]);
-  if (error) throw new Error(error.message);
+  await fetch("/api/media/delete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path }),
+  });
 }
