@@ -4,6 +4,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/automations/admin-client";
 import { normalizePhone } from "@/lib/whatsapp/phone-utils";
 import { findExistingContact, isUniqueViolation } from "@/lib/contacts/dedupe";
+import { decrypt } from "@/lib/whatsapp/encryption";
+import { downloadMedia } from "@/lib/whatsapp/uazapi-api";
 
 // ============================================================
 // Webhook de ENTRADA do provedor uazapi (uazapiGO).
@@ -106,7 +108,13 @@ async function processWebhook(body: UazapiWebhookBody) {
   // 1) Resolver a conta. Criamos a instância com nome "account-<accountId>",
   // então extraímos o accountId do instanceName. (Fallback: casar por
   // uazapi_instance_id, caso o payload traga a instância dentro da mensagem.)
-  let config: { id: string; account_id: string; user_id: string } | null = null;
+  type ConfigRow = {
+    id: string;
+    account_id: string;
+    user_id: string;
+    uazapi_instance_token: string | null;
+  };
+  let config: ConfigRow | null = null;
   const accountId = instanceName.startsWith("account-")
     ? instanceName.slice("account-".length)
     : null;
@@ -114,18 +122,18 @@ async function processWebhook(body: UazapiWebhookBody) {
   if (accountId) {
     const { data: byAccount } = await db
       .from("whatsapp_config")
-      .select("id, account_id, user_id")
+      .select("id, account_id, user_id, uazapi_instance_token")
       .eq("account_id", accountId)
       .maybeSingle();
-    config = byAccount ?? null;
+    config = (byAccount as ConfigRow) ?? null;
   }
   if (!config && data.instance) {
     const { data: byInstance } = await db
       .from("whatsapp_config")
-      .select("id, account_id, user_id")
+      .select("id, account_id, user_id, uazapi_instance_token")
       .eq("uazapi_instance_id", data.instance)
       .maybeSingle();
-    config = byInstance ?? null;
+    config = (byInstance as ConfigRow) ?? null;
   }
 
   if (!config) {
@@ -153,7 +161,16 @@ async function processWebhook(body: UazapiWebhookBody) {
     data.content !== undefined ||
     Boolean(data.fileURL);
   if (looksLikeMessage) {
-    await processMessage(db, config.account_id, config.user_id, data);
+    const instanceToken = config.uazapi_instance_token
+      ? decrypt(config.uazapi_instance_token)
+      : "";
+    await processMessage(
+      db,
+      config.account_id,
+      config.user_id,
+      data,
+      instanceToken,
+    );
     return;
   }
 
@@ -249,12 +266,31 @@ const ALLOWED_CONTENT_TYPES = new Set([
   "interactive",
 ]);
 
-/** messageType do uazapi → content_type do CRM. */
+/**
+ * messageType do WhatsApp/uazapi → content_type do CRM. Os valores reais
+ * são "Conversation", "ExtendedTextMessage", "AudioMessage",
+ * "ImageMessage", "VideoMessage", "DocumentMessage", "StickerMessage"…
+ */
 function mapContentType(messageType: string | undefined): string {
   const t = (messageType ?? "").toLowerCase();
-  if (t === "ptt") return "audio";
+  if (t.includes("audio") || t === "ptt") return "audio";
+  if (t.includes("sticker") || t.includes("image")) return "image";
+  if (t.includes("video")) return "video";
+  if (t.includes("document")) return "document";
   if (ALLOWED_CONTENT_TYPES.has(t)) return t;
   return "text";
+}
+
+/** Prévia da conversa quando a mensagem não tem texto (mídia). */
+function previewText(contentType: string, text: string | null): string {
+  if (text) return text;
+  const labels: Record<string, string> = {
+    audio: "[áudio]",
+    image: "[imagem]",
+    video: "[vídeo]",
+    document: "[documento]",
+  };
+  return labels[contentType] ?? "[mensagem]";
 }
 
 /**
@@ -279,6 +315,7 @@ async function processMessage(
   accountId: string,
   configOwnerUserId: string,
   data: UazapiMessage,
+  instanceToken: string,
 ) {
   // Ignora só o que o PRÓPRIO CRM enviou pela API (senão duplicaria o que
   // já está no banco). Mensagens enviadas do CELULAR (fromMe) são
@@ -299,7 +336,25 @@ async function processMessage(
       ? String((data.content as { text?: unknown }).text ?? "")
       : "") ||
     null;
-  const mediaUrl = data.fileURL ? data.fileURL : null;
+  // Mídia inbound vem criptografada (.enc) e o `fileURL` do payload
+  // costuma vir vazio; resolve para uma URL servível via /message/download.
+  let mediaUrl = data.fileURL || null;
+  const isMedia =
+    contentType === "audio" ||
+    contentType === "image" ||
+    contentType === "video" ||
+    contentType === "document";
+  if (isMedia && !mediaUrl && instanceToken) {
+    const mid = data.id || data.messageid;
+    if (mid) {
+      try {
+        const dl = await downloadMedia(instanceToken, mid);
+        if (dl.fileURL) mediaUrl = dl.fileURL;
+      } catch (err) {
+        console.error("[uazapi-webhook] falha ao baixar mídia:", err);
+      }
+    }
+  }
 
   // findOrCreate contato (account-scoped, por telefone).
   const contact = await findOrCreateContact(
@@ -361,7 +416,7 @@ async function processMessage(
   const { error: convError } = await db
     .from("conversations")
     .update({
-      last_message_text: contentText || `[${contentType}]`,
+      last_message_text: previewText(contentType, contentText),
       last_message_at: new Date().toISOString(),
       unread_count: isOutgoing
         ? conversation.unread_count || 0

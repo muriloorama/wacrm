@@ -266,3 +266,19 @@ export async function sendReaction(args: {
     body: { number: args.to, id: args.targetMessageId, text: args.emoji },
   });
 }
+
+/**
+ * Baixa a mídia de uma mensagem recebida e devolve uma URL hospedada
+ * (utilizável) + mimetype. A mídia inbound do WhatsApp vem criptografada
+ * (`.enc`); este endpoint resolve para um arquivo servível.
+ */
+export async function downloadMedia(
+  token: string,
+  messageId: string,
+): Promise<{ fileURL: string; mimetype: string }> {
+  const data = await call<{ fileURL?: string; mimetype?: string }>(
+    "/message/download",
+    { auth: "instance", token, body: { id: messageId } },
+  );
+  return { fileURL: data.fileURL ?? "", mimetype: data.mimetype ?? "" };
+}
