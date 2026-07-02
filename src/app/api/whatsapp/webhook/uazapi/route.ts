@@ -7,6 +7,8 @@ import { findExistingContact, isUniqueViolation } from "@/lib/contacts/dedupe";
 import { decrypt } from "@/lib/whatsapp/encryption";
 import { downloadMedia } from "@/lib/whatsapp/uazapi-api";
 import { isB2Configured, uploadBuffer, publicUrl } from "@/lib/storage/b2";
+import { runAutomationsForTrigger } from "@/lib/automations/engine";
+import { dispatchInboundToFlows } from "@/lib/flows/engine";
 
 // ============================================================
 // Webhook de ENTRADA do provedor uazapi (uazapiGO).
@@ -687,6 +689,63 @@ async function processMessage(
 
   if (convError) {
     console.error("[uazapi-webhook] erro ao atualizar conversa:", convError);
+  }
+
+  // ============================================================
+  // Dispara FLUXOS + AUTOMAÇÕES para mensagens RECEBIDAS de cliente
+  // (espelha o webhook da Meta). Mensagens de saída (fromMe) e grupos
+  // não disparam. Se um fluxo consome a mensagem, suprime os gatilhos de
+  // conteúdo (new_message_received/keyword_match).
+  // ============================================================
+  if (!isOutgoing && !isGroupMsg) {
+    try {
+      // Primeira mensagem de cliente nesta conversa?
+      const { count } = await db
+        .from("messages")
+        .select("id", { count: "exact", head: true })
+        .eq("conversation_id", conversation.id)
+        .eq("sender_type", "customer");
+      const isFirstInbound = (count ?? 0) <= 1;
+      const inboundText = contentText ?? "";
+
+      const flowResult = await dispatchInboundToFlows({
+        accountId,
+        userId: configOwnerUserId,
+        contactId: contact.id,
+        conversationId: conversation.id,
+        message: {
+          kind: "text",
+          text: inboundText,
+          meta_message_id: data.messageid ?? "",
+        },
+        isFirstInboundMessage: isFirstInbound,
+      });
+
+      const triggers: (
+        | "new_message_received"
+        | "keyword_match"
+        | "first_inbound_message"
+      )[] = [];
+      if (!flowResult.consumed) {
+        triggers.push("new_message_received", "keyword_match");
+      }
+      if (isFirstInbound) triggers.unshift("first_inbound_message");
+      for (const triggerType of triggers) {
+        runAutomationsForTrigger({
+          accountId,
+          triggerType,
+          contactId: contact.id,
+          context: {
+            message_text: inboundText,
+            conversation_id: conversation.id,
+          },
+        }).catch((err) =>
+          console.error("[uazapi-webhook] automação falhou:", err),
+        );
+      }
+    } catch (err) {
+      console.error("[uazapi-webhook] dispatch fluxos/automações:", err);
+    }
   }
 }
 
