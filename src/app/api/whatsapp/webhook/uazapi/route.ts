@@ -15,8 +15,8 @@ import { downloadMedia } from "@/lib/whatsapp/uazapi-api";
 //     instance: "<id_da_instancia>",
 //     data: <Message> }
 //
-// Não é autenticado por usuário — resolvemos a conta pela instância
-// (whatsapp_config.uazapi_instance_id). Espelha EXATAMENTE a lógica de
+// Não é autenticado por usuário — resolvemos o CANAL pela instância
+// (whatsapp_channels). Espelha EXATAMENTE a lógica de
 // banco do webhook da Meta (src/app/api/whatsapp/webhook/route.ts):
 // findOrCreate de contato/conversa, insert em `messages` com
 // sender_type:'customer', e bump de conversations.unread_count.
@@ -105,40 +105,52 @@ async function processWebhook(body: UazapiWebhookBody) {
 
   const db = supabaseAdmin();
 
-  // 1) Resolver a conta. Criamos a instância com nome "account-<accountId>",
-  // então extraímos o accountId do instanceName. (Fallback: casar por
-  // uazapi_instance_id, caso o payload traga a instância dentro da mensagem.)
-  type ConfigRow = {
+  // 1) Resolver o CANAL (whatsapp_channels) pela instância.
+  //   - Canais novos nomeiam a instância "channel-<id-da-linha>".
+  //   - O canal "Principal" migrado usa "account-<accountId>" — resolvemos
+  //     pelo account_id (pegamos o primeiro canal da conta).
+  //   - Fallback: casar por uazapi_instance_id, caso o payload traga a
+  //     instância dentro da mensagem.
+  type ChannelRow = {
     id: string;
     account_id: string;
-    user_id: string;
+    created_by: string | null;
     uazapi_instance_token: string | null;
   };
-  let config: ConfigRow | null = null;
-  const accountId = instanceName.startsWith("account-")
-    ? instanceName.slice("account-".length)
-    : null;
+  const CHANNEL_COLS = "id, account_id, created_by, uazapi_instance_token";
+  let channel: ChannelRow | null = null;
 
-  if (accountId) {
-    const { data: byAccount } = await db
-      .from("whatsapp_config")
-      .select("id, account_id, user_id, uazapi_instance_token")
-      .eq("account_id", accountId)
+  if (instanceName.startsWith("channel-")) {
+    const channelId = instanceName.slice("channel-".length);
+    const { data: byId } = await db
+      .from("whatsapp_channels")
+      .select(CHANNEL_COLS)
+      .eq("id", channelId)
       .maybeSingle();
-    config = (byAccount as ConfigRow) ?? null;
+    channel = (byId as ChannelRow) ?? null;
+  } else if (instanceName.startsWith("account-")) {
+    const accountId = instanceName.slice("account-".length);
+    const { data: byAccount } = await db
+      .from("whatsapp_channels")
+      .select(CHANNEL_COLS)
+      .eq("account_id", accountId)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    channel = (byAccount as ChannelRow) ?? null;
   }
-  if (!config && data.instance) {
+  if (!channel && data.instance) {
     const { data: byInstance } = await db
-      .from("whatsapp_config")
-      .select("id, account_id, user_id, uazapi_instance_token")
+      .from("whatsapp_channels")
+      .select(CHANNEL_COLS)
       .eq("uazapi_instance_id", data.instance)
       .maybeSingle();
-    config = (byInstance as ConfigRow) ?? null;
+    channel = (byInstance as ChannelRow) ?? null;
   }
 
-  if (!config) {
+  if (!channel) {
     console.warn(
-      "[uazapi-webhook] conta não resolvida — instanceName:",
+      "[uazapi-webhook] canal não resolvido — instanceName:",
       instanceName,
     );
     return;
@@ -161,13 +173,14 @@ async function processWebhook(body: UazapiWebhookBody) {
     data.content !== undefined ||
     Boolean(data.fileURL);
   if (looksLikeMessage) {
-    const instanceToken = config.uazapi_instance_token
-      ? decrypt(config.uazapi_instance_token)
+    const instanceToken = channel.uazapi_instance_token
+      ? decrypt(channel.uazapi_instance_token)
       : "";
     await processMessage(
       db,
-      config.account_id,
-      config.user_id,
+      channel.account_id,
+      channel.created_by ?? channel.account_id,
+      channel.id,
       data,
       instanceToken,
     );
@@ -314,6 +327,7 @@ async function processMessage(
   db: SupabaseClient,
   accountId: string,
   configOwnerUserId: string,
+  channelId: string,
   data: UazapiMessage,
   instanceToken: string,
 ) {
@@ -366,11 +380,12 @@ async function processMessage(
   );
   if (!contact) return;
 
-  // findOrCreate conversa.
+  // findOrCreate conversa (grava o canal de origem).
   const conversation = await findOrCreateConversation(
     db,
     accountId,
     configOwnerUserId,
+    channelId,
     contact.id,
   );
   if (!conversation) return;
@@ -486,6 +501,7 @@ async function findOrCreateConversation(
   db: SupabaseClient,
   accountId: string,
   configOwnerUserId: string,
+  channelId: string,
   contactId: string,
 ): Promise<ConversationRow | null> {
   const { data: existing, error: findError } = await db
@@ -495,7 +511,18 @@ async function findOrCreateConversation(
     .eq("contact_id", contactId)
     .single();
 
-  if (!findError && existing) return existing;
+  if (!findError && existing) {
+    // Garante que a conversa aponte para o canal de origem (retro-preenche
+    // conversas anteriores à existência de canais nomeados).
+    if (!existing.channel_id) {
+      await db
+        .from("conversations")
+        .update({ channel_id: channelId })
+        .eq("id", existing.id);
+      existing.channel_id = channelId;
+    }
+    return existing;
+  }
 
   const { data: newConv, error: createError } = await db
     .from("conversations")
@@ -503,6 +530,7 @@ async function findOrCreateConversation(
       account_id: accountId,
       user_id: configOwnerUserId,
       contact_id: contactId,
+      channel_id: channelId,
     })
     .select()
     .single();

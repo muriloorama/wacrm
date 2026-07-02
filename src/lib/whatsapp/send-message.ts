@@ -234,66 +234,111 @@ export async function sendMessageToConversation(
     );
   }
 
-  // WhatsApp config, account-scoped.
-  const { data: config, error: configError } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', accountId)
-    .single();
-
-  if (configError || !config) {
-    throw new SendMessageError(
-      'whatsapp_not_configured',
-      'WhatsApp not configured. Please set up your WhatsApp integration first.',
-      400
-    );
-  }
-
-  // Resolve o provedor (Meta | uazapi) a partir da config da conta e
-  // decripta só o token do provedor em uso.
-  const providerKind = config.provider === 'uazapi' ? 'uazapi' : 'meta';
+  // Resolve as credenciais de envio. Se a conversa tem um canal
+  // (whatsapp_channels), ele tem prioridade e define o provedor/token.
+  // Caso contrário, cai no comportamento anterior (whatsapp_config da conta).
+  let providerName: string | null = null;
+  let phoneNumberId: string | null = null;
   let accessToken = '';
   let uazapiToken: string | undefined;
 
-  if (providerKind === 'uazapi') {
-    if (!config.uazapi_instance_token) {
-      throw new SendMessageError(
-        'whatsapp_not_configured',
-        'WhatsApp por QR Code não conectado. Conecte um número em Configurações.',
-        400
-      );
-    }
-    uazapiToken = decrypt(config.uazapi_instance_token);
-  } else {
-    if (!config.access_token) {
-      throw new SendMessageError(
-        'whatsapp_not_configured',
-        'WhatsApp (Meta) não configurado.',
-        400
-      );
-    }
-    accessToken = decrypt(config.access_token);
+  if (conversation.channel_id) {
+    const { data: channel, error: channelError } = await db
+      .from('whatsapp_channels')
+      .select('*')
+      .eq('id', conversation.channel_id)
+      .eq('account_id', accountId)
+      .single();
 
-    // Self-heal legacy CBC ciphertexts. Fire-and-forget; idempotent.
-    if (isLegacyFormat(config.access_token)) {
-      void db
-        .from('whatsapp_config')
-        .update({ access_token: encrypt(accessToken) })
-        .eq('id', config.id)
-        .then(({ error }: { error: { message: string } | null }) => {
-          if (error) {
-            console.warn(
-              '[send-message] access_token GCM upgrade failed:',
-              error.message
-            );
-          }
-        });
+    if (channelError || !channel) {
+      throw new SendMessageError(
+        'whatsapp_not_configured',
+        'Canal de WhatsApp não encontrado para esta conversa.',
+        400
+      );
+    }
+
+    providerName = channel.provider === 'uazapi' ? 'uazapi' : 'meta';
+    phoneNumberId = channel.phone_number_id ?? null;
+
+    if (providerName === 'uazapi') {
+      if (!channel.uazapi_instance_token) {
+        throw new SendMessageError(
+          'whatsapp_not_configured',
+          'Canal por QR Code não conectado. Conecte um número em Configurações.',
+          400
+        );
+      }
+      uazapiToken = decrypt(channel.uazapi_instance_token);
+    } else {
+      if (!channel.access_token) {
+        throw new SendMessageError(
+          'whatsapp_not_configured',
+          'Canal do WhatsApp (Meta) não configurado.',
+          400
+        );
+      }
+      accessToken = decrypt(channel.access_token);
+    }
+  } else {
+    // Fallback: WhatsApp config, account-scoped.
+    const { data: config, error: configError } = await db
+      .from('whatsapp_config')
+      .select('*')
+      .eq('account_id', accountId)
+      .single();
+
+    if (configError || !config) {
+      throw new SendMessageError(
+        'whatsapp_not_configured',
+        'WhatsApp not configured. Please set up your WhatsApp integration first.',
+        400
+      );
+    }
+
+    providerName = config.provider === 'uazapi' ? 'uazapi' : 'meta';
+    phoneNumberId = config.phone_number_id ?? null;
+
+    if (providerName === 'uazapi') {
+      if (!config.uazapi_instance_token) {
+        throw new SendMessageError(
+          'whatsapp_not_configured',
+          'WhatsApp por QR Code não conectado. Conecte um número em Configurações.',
+          400
+        );
+      }
+      uazapiToken = decrypt(config.uazapi_instance_token);
+    } else {
+      if (!config.access_token) {
+        throw new SendMessageError(
+          'whatsapp_not_configured',
+          'WhatsApp (Meta) não configurado.',
+          400
+        );
+      }
+      accessToken = decrypt(config.access_token);
+
+      // Self-heal legacy CBC ciphertexts. Fire-and-forget; idempotent.
+      if (isLegacyFormat(config.access_token)) {
+        void db
+          .from('whatsapp_config')
+          .update({ access_token: encrypt(accessToken) })
+          .eq('id', config.id)
+          .then(({ error }: { error: { message: string } | null }) => {
+            if (error) {
+              console.warn(
+                '[send-message] access_token GCM upgrade failed:',
+                error.message
+              );
+            }
+          });
+      }
     }
   }
 
   const provider = getProvider({
-    provider: config.provider,
-    phoneNumberId: config.phone_number_id,
+    provider: providerName,
+    phoneNumberId,
     accessToken,
     uazapiToken,
   });
@@ -362,7 +407,7 @@ export async function sendMessageToConversation(
         return r.messageId;
       }
       const result = await sendTemplateMessage({
-        phoneNumberId: config.phone_number_id!,
+        phoneNumberId: phoneNumberId!,
         accessToken,
         to: phone,
         templateName: templateName!,
