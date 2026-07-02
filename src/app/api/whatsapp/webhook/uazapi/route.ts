@@ -245,7 +245,7 @@ function mapContentType(messageType: string | undefined): string {
  * de privacidade do WhatsApp (não é telefone).
  */
 function extractPhone(data: UazapiMessage): string {
-  let raw = data.sender_pn || data.chatid || "";
+  let raw = data.chatid || data.sender_pn || "";
   if (!raw && data.sender && !data.sender.includes("@lid")) {
     raw = data.sender;
   }
@@ -261,9 +261,13 @@ async function processMessage(
   configOwnerUserId: string,
   data: UazapiMessage,
 ) {
-  // 2) Ignorar mensagens próprias (evita loop) e grupos (por enquanto).
-  if (data.fromMe === true || data.wasSentByApi === true) return;
+  // Ignora só o que o PRÓPRIO CRM enviou pela API (senão duplicaria o que
+  // já está no banco). Mensagens enviadas do CELULAR (fromMe) são
+  // espelhadas como saída, para o inbox refletir o aparelho. Grupos: fora
+  // por enquanto.
+  if (data.wasSentByApi === true) return;
   if (data.isGroup === true) return;
+  const isOutgoing = data.fromMe === true;
 
   const phone = extractPhone(data);
   if (!phone) return;
@@ -320,12 +324,12 @@ async function processMessage(
   // (sender_type:'customer', status:'delivered').
   const { error: msgError } = await db.from("messages").insert({
     conversation_id: conversation.id,
-    sender_type: "customer",
+    sender_type: isOutgoing ? "agent" : "customer",
     content_type: contentType,
     content_text: contentText,
     media_url: mediaUrl,
     message_id: data.messageid ?? null,
-    status: "delivered",
+    status: isOutgoing ? "sent" : "delivered",
     created_at: createdAt,
   });
 
@@ -340,7 +344,9 @@ async function processMessage(
     .update({
       last_message_text: contentText || `[${contentType}]`,
       last_message_at: new Date().toISOString(),
-      unread_count: (conversation.unread_count || 0) + 1,
+      unread_count: isOutgoing
+        ? conversation.unread_count || 0
+        : (conversation.unread_count || 0) + 1,
       updated_at: new Date().toISOString(),
     })
     .eq("id", conversation.id);
