@@ -22,11 +22,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import {
-  sendTextMessage,
   sendTemplateMessage,
-  sendMediaMessage,
   type MediaKind,
 } from '@/lib/whatsapp/meta-api';
+import { getProvider } from '@/lib/whatsapp/provider';
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption';
 import { supabaseAdmin } from '@/lib/flows/admin-client';
 import {
@@ -44,6 +43,22 @@ export const VALID_MESSAGE_TYPES = [
   'template',
   ...MEDIA_KINDS,
 ] as const;
+
+/**
+ * Renderiza o corpo de um template substituindo {{1}}, {{2}}… pelos
+ * params posicionais. Usado quando o provedor é o uazapi (que não tem
+ * templates aprovados pela Meta) — o texto sai como mensagem normal.
+ */
+function renderTemplateBody(
+  row: MessageTemplate | null,
+  params: string[] | null | undefined,
+): string {
+  let body = (row?.body_text as string) ?? '';
+  (params ?? []).forEach((p, i) => {
+    body = body.replace(new RegExp(`\\{\\{\\s*${i + 1}\\s*\\}\\}`, 'g'), p ?? '');
+  });
+  return body;
+}
 
 /**
  * Typed failure with a machine `code` and a suggested HTTP `status`.
@@ -234,23 +249,54 @@ export async function sendMessageToConversation(
     );
   }
 
-  const accessToken = decrypt(config.access_token);
+  // Resolve o provedor (Meta | uazapi) a partir da config da conta e
+  // decripta só o token do provedor em uso.
+  const providerKind = config.provider === 'uazapi' ? 'uazapi' : 'meta';
+  let accessToken = '';
+  let uazapiToken: string | undefined;
 
-  // Self-heal legacy CBC ciphertexts. Fire-and-forget; idempotent.
-  if (isLegacyFormat(config.access_token)) {
-    void db
-      .from('whatsapp_config')
-      .update({ access_token: encrypt(accessToken) })
-      .eq('id', config.id)
-      .then(({ error }: { error: { message: string } | null }) => {
-        if (error) {
-          console.warn(
-            '[send-message] access_token GCM upgrade failed:',
-            error.message
-          );
-        }
-      });
+  if (providerKind === 'uazapi') {
+    if (!config.uazapi_instance_token) {
+      throw new SendMessageError(
+        'whatsapp_not_configured',
+        'Instância do uazapi não conectada. Conecte um número em Configurações.',
+        400
+      );
+    }
+    uazapiToken = decrypt(config.uazapi_instance_token);
+  } else {
+    if (!config.access_token) {
+      throw new SendMessageError(
+        'whatsapp_not_configured',
+        'WhatsApp (Meta) não configurado.',
+        400
+      );
+    }
+    accessToken = decrypt(config.access_token);
+
+    // Self-heal legacy CBC ciphertexts. Fire-and-forget; idempotent.
+    if (isLegacyFormat(config.access_token)) {
+      void db
+        .from('whatsapp_config')
+        .update({ access_token: encrypt(accessToken) })
+        .eq('id', config.id)
+        .then(({ error }: { error: { message: string } | null }) => {
+          if (error) {
+            console.warn(
+              '[send-message] access_token GCM upgrade failed:',
+              error.message
+            );
+          }
+        });
+    }
   }
+
+  const provider = getProvider({
+    provider: config.provider,
+    phoneNumberId: config.phone_number_id,
+    accessToken,
+    uazapiToken,
+  });
 
   // Resolve the reply target to its Meta message_id. The parent must
   // belong to this same conversation — otherwise a caller could quote
@@ -303,8 +349,20 @@ export async function sendMessageToConversation(
 
   const attempt = async (phone: string): Promise<string> => {
     if (messageType === 'template') {
+      // uazapi não tem templates aprovados pela Meta — envia o corpo do
+      // template renderizado como texto simples.
+      if (provider.kind === 'uazapi') {
+        const body =
+          renderTemplateBody(templateRow, templateParams) || contentText || '';
+        const r = await provider.sendText({
+          to: phone,
+          text: body,
+          contextMessageId,
+        });
+        return r.messageId;
+      }
       const result = await sendTemplateMessage({
-        phoneNumberId: config.phone_number_id,
+        phoneNumberId: config.phone_number_id!,
         accessToken,
         to: phone,
         templateName: templateName!,
@@ -317,9 +375,7 @@ export async function sendMessageToConversation(
       return result.messageId;
     }
     if (isMediaKind) {
-      const result = await sendMediaMessage({
-        phoneNumberId: config.phone_number_id,
-        accessToken,
+      const result = await provider.sendMedia({
         to: phone,
         kind: messageType as MediaKind,
         link: mediaUrl!,
@@ -329,9 +385,7 @@ export async function sendMessageToConversation(
       });
       return result.messageId;
     }
-    const result = await sendTextMessage({
-      phoneNumberId: config.phone_number_id,
-      accessToken,
+    const result = await provider.sendText({
       to: phone,
       text: contentText!,
       contextMessageId,
