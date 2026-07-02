@@ -22,6 +22,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { SettingsPanelHead } from './settings-panel-head';
+import { UazapiConnect } from './uazapi-connect';
 import {
   Accordion,
   AccordionItem,
@@ -754,6 +755,12 @@ export function WhatsAppConfig() {
             </Button>
           )}
         </div>
+
+        {/* Conectar via QR (uazapi) — alternativa à API oficial da Meta.
+            O componente cuida do próprio estado e só chama as rotas
+            /api/whatsapp/uazapi/connect; se o provedor não estiver
+            configurado no servidor, ele não renderiza nada. */}
+        <UazapiConnect />
       </div>
 
       {/* Setup Instructions Sidebar */}
