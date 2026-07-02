@@ -208,7 +208,9 @@ export function ConversationList({
     for (const ch of channels) m.set(ch.id, ch.name);
     return m;
   }, [channels]);
-  const showChannelBadge = channels.length > 1;
+  // Mostra o nome do canal (caixa de entrada) em cada conversa sempre que
+  // houver ao menos um canal — para o usuário saber a qual caixa pertence.
+  const showChannelBadge = channels.length >= 1;
 
   const filtered = useMemo(() => {
     let result = conversations;
