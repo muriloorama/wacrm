@@ -225,14 +225,12 @@ export async function sendMessageToConversation(
     );
   }
 
-  const sanitizedPhone = sanitizePhoneForMeta(contact.phone);
-  if (!isValidE164(sanitizedPhone)) {
-    throw new SendMessageError(
-      'bad_request',
-      'Invalid phone number format',
-      400
-    );
-  }
+  // Grupos são armazenados como contatos com is_group=true e
+  // phone = id do grupo (só dígitos, ex.: "120363999888777"); o JID do
+  // grupo no WhatsApp é `<id>@g.us`. A validação E164 é específica da
+  // Meta e agora acontece por-provider no momento do envio (o uazapi
+  // aceita telefone ou JID de grupo e normaliza sozinho).
+  const isGroup = contact.is_group === true;
 
   // Resolve as credenciais de envio. Se a conversa tem um canal
   // (whatsapp_channels), ele tem prioridade e define o provedor/token.
@@ -438,49 +436,83 @@ export async function sendMessageToConversation(
     return result.messageId;
   };
 
-  // Send via Meta — retry across phone-number variants if Meta rejects
-  // with "recipient not in allowed list"; persist a working variant
-  // back to the contact so the next send goes straight through.
   let waMessageId = '';
-  let workingPhone = sanitizedPhone;
-  try {
-    const variants = phoneVariants(sanitizedPhone);
-    let lastError: unknown = null;
 
-    for (const variant of variants) {
-      try {
-        waMessageId = await attempt(variant);
-        workingPhone = variant;
-        lastError = null;
-        break;
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        if (!isRecipientNotAllowedError(message)) {
-          throw err;
-        }
-        lastError = err;
-        console.warn(
-          `[send-message] variant "${variant}" rejected by Meta, trying next…`
-        );
-      }
+  if (provider.kind === 'uazapi') {
+    // uazapi: NÃO exige E164. O campo `number` aceita telefone ou JID de
+    // grupo e é normalizado do lado do uazapi. Grupos usam o JID
+    // reconstruído (`<id>@g.us`); 1:1 usa o telefone como está. Sem retry
+    // por variantes — isso é específico da Meta.
+    const to = isGroup ? `${contact.phone}@g.us` : contact.phone;
+    try {
+      waMessageId = await attempt(to);
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'Unknown uazapi API error';
+      console.error('[send-message] uazapi send failed:', message);
+      throw new SendMessageError(
+        'uazapi_error',
+        `uazapi API error: ${message}`,
+        502
+      );
+    }
+  } else {
+    // Send via Meta — exige E164. Sanitiza, valida, e faz retry across
+    // phone-number variants if Meta rejects with "recipient not in
+    // allowed list"; persist a working variant back to the contact so the
+    // next send goes straight through.
+    const sanitizedPhone = sanitizePhoneForMeta(contact.phone);
+    if (!isValidE164(sanitizedPhone)) {
+      throw new SendMessageError(
+        'bad_request',
+        'Invalid phone number format',
+        400
+      );
     }
 
-    if (lastError) throw lastError;
-  } catch (err) {
-    const message =
-      err instanceof Error ? err.message : 'Unknown Meta API error';
-    console.error('[send-message] Meta send failed for all variants:', message);
-    throw new SendMessageError('meta_error', `Meta API error: ${message}`, 502);
-  }
+    let workingPhone = sanitizedPhone;
+    try {
+      const variants = phoneVariants(sanitizedPhone);
+      let lastError: unknown = null;
 
-  if (workingPhone !== sanitizedPhone) {
-    console.log(
-      `[send-message] Auto-corrected contact phone: ${sanitizedPhone} → ${workingPhone}`
-    );
-    await db
-      .from('contacts')
-      .update({ phone: workingPhone })
-      .eq('id', contact.id);
+      for (const variant of variants) {
+        try {
+          waMessageId = await attempt(variant);
+          workingPhone = variant;
+          lastError = null;
+          break;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          if (!isRecipientNotAllowedError(message)) {
+            throw err;
+          }
+          lastError = err;
+          console.warn(
+            `[send-message] variant "${variant}" rejected by Meta, trying next…`
+          );
+        }
+      }
+
+      if (lastError) throw lastError;
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'Unknown Meta API error';
+      console.error(
+        '[send-message] Meta send failed for all variants:',
+        message
+      );
+      throw new SendMessageError('meta_error', `Meta API error: ${message}`, 502);
+    }
+
+    if (workingPhone !== sanitizedPhone) {
+      console.log(
+        `[send-message] Auto-corrected contact phone: ${sanitizedPhone} → ${workingPhone}`
+      );
+      await db
+        .from('contacts')
+        .update({ phone: workingPhone })
+        .eq('id', contact.id);
+    }
   }
 
   // Persist the sent message. Field names MUST match the messages

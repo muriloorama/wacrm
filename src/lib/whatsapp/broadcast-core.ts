@@ -19,7 +19,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { sendTemplateMessage } from '@/lib/whatsapp/meta-api';
-import { decrypt } from '@/lib/whatsapp/encryption';
+import { getProvider } from '@/lib/whatsapp/provider';
+import {
+  resolveProviderConfig,
+  renderTemplateBody,
+} from '@/lib/whatsapp/provider-config';
 import {
   sanitizePhoneForMeta,
   isValidE164,
@@ -66,8 +70,12 @@ export interface BroadcastPlan {
   broadcastId: string;
   templateName: string;
   templateLanguage: string;
-  phoneNumberId: string;
+  /** Provider resolvido da conta ('meta' | 'uazapi'). */
+  providerName: string;
+  phoneNumberId: string | null;
   accessToken: string;
+  /** Token da instância uazapi (decriptado) quando providerName='uazapi'. */
+  uazapiToken?: string;
   templateRow: MessageTemplate | null;
   planned: PlannedRecipient[];
   /** Phones rejected up front (invalid E.164) — counted as failed. */
@@ -123,7 +131,18 @@ export async function createBroadcast(
       400
     );
   }
-  const accessToken = decrypt(config.access_token);
+  // Resolve o provider da conta (Meta OU uazapi) e decripta o token do
+  // provider em uso. Converte a falha de credencial num BroadcastError.
+  let pc;
+  try {
+    pc = resolveProviderConfig(config);
+  } catch (err) {
+    throw new BroadcastError(
+      'whatsapp_not_configured',
+      err instanceof Error ? err.message : 'WhatsApp not configured',
+      400
+    );
+  }
 
   // Template row (once) for header/button components; guard a
   // malformed local row rather than N identical opaque failures.
@@ -238,8 +257,10 @@ export async function createBroadcast(
     broadcastId: broadcast.id,
     templateName,
     templateLanguage,
-    phoneNumberId: config.phone_number_id,
-    accessToken,
+    providerName: pc.providerName,
+    phoneNumberId: pc.phoneNumberId ?? null,
+    accessToken: pc.accessToken ?? '',
+    uazapiToken: pc.uazapiToken ?? undefined,
     templateRow,
     planned,
     rejected,
@@ -265,6 +286,15 @@ export async function deliverBroadcast(
 ): Promise<void> {
   let sentCount = 0;
 
+  // Provider da conta (Meta OU uazapi). uazapi não tem templates
+  // aprovados → o corpo do template é renderizado como texto.
+  const provider = getProvider({
+    provider: plan.providerName,
+    phoneNumberId: plan.phoneNumberId,
+    accessToken: plan.accessToken,
+    uazapiToken: plan.uazapiToken,
+  });
+
   for (const recipient of plan.planned) {
     const variants = phoneVariants(recipient.phone);
     let sentMessageId: string | null = null;
@@ -272,16 +302,24 @@ export async function deliverBroadcast(
 
     for (const variant of variants) {
       try {
-        const result = await sendTemplateMessage({
-          phoneNumberId: plan.phoneNumberId,
-          accessToken: plan.accessToken,
-          to: variant,
-          templateName: plan.templateName,
-          language: plan.templateLanguage,
-          template: plan.templateRow ?? undefined,
-          params: recipient.params,
-        });
-        sentMessageId = result.messageId;
+        let messageId: string;
+        if (provider.kind === 'uazapi') {
+          const body = renderTemplateBody(plan.templateRow, recipient.params);
+          const r = await provider.sendText({ to: variant, text: body });
+          messageId = r.messageId;
+        } else {
+          const result = await sendTemplateMessage({
+            phoneNumberId: plan.phoneNumberId!,
+            accessToken: plan.accessToken,
+            to: variant,
+            templateName: plan.templateName,
+            language: plan.templateLanguage,
+            template: plan.templateRow ?? undefined,
+            params: recipient.params,
+          });
+          messageId = result.messageId;
+        }
+        sentMessageId = messageId;
         lastError = null;
         break;
       } catch (error) {

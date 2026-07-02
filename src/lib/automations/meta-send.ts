@@ -1,5 +1,9 @@
-import { sendTextMessage, sendTemplateMessage } from '@/lib/whatsapp/meta-api'
-import { decrypt } from '@/lib/whatsapp/encryption'
+import { sendTemplateMessage } from '@/lib/whatsapp/meta-api'
+import { getProvider } from '@/lib/whatsapp/provider'
+import {
+  resolveProviderConfig,
+  renderTemplateBody,
+} from '@/lib/whatsapp/provider-config'
 import {
   sanitizePhoneForMeta,
   isValidE164,
@@ -92,13 +96,35 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
     throw new Error('WhatsApp not configured for this account')
   }
 
-  const accessToken = decrypt(config.access_token)
+  // Resolve o provider da conta (Meta OU uazapi) e decripta o token
+  // do provider em uso, em vez de assumir Meta.
+  const pc = resolveProviderConfig(config)
+  const provider = getProvider(pc)
+
+  // uazapi não tem templates aprovados pela Meta — para renderizar o
+  // corpo como texto precisamos da linha local do template.
+  let templateRow: { body_text: string } | null = null
+  if (input.kind === 'template' && provider.kind === 'uazapi') {
+    const { data } = await db
+      .from('message_templates')
+      .select('body_text')
+      .eq('account_id', input.accountId)
+      .eq('name', input.templateName)
+      .eq('language', input.language || 'en_US')
+      .maybeSingle()
+    templateRow = (data as { body_text: string } | null) ?? null
+  }
 
   const attempt = async (phone: string): Promise<string> => {
     if (input.kind === 'template') {
+      if (provider.kind === 'uazapi') {
+        const body = renderTemplateBody(templateRow, input.params)
+        const r = await provider.sendText({ to: phone, text: body })
+        return r.messageId
+      }
       const r = await sendTemplateMessage({
-        phoneNumberId: config.phone_number_id,
-        accessToken,
+        phoneNumberId: pc.phoneNumberId!,
+        accessToken: pc.accessToken!,
         to: phone,
         templateName: input.templateName,
         language: input.language,
@@ -106,12 +132,7 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
       })
       return r.messageId
     }
-    const r = await sendTextMessage({
-      phoneNumberId: config.phone_number_id,
-      accessToken,
-      to: phone,
-      text: input.text,
-    })
+    const r = await provider.sendText({ to: phone, text: input.text })
     return r.messageId
   }
 

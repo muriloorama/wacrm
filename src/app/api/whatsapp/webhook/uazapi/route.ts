@@ -6,6 +6,7 @@ import { normalizePhone } from "@/lib/whatsapp/phone-utils";
 import { findExistingContact, isUniqueViolation } from "@/lib/contacts/dedupe";
 import { decrypt } from "@/lib/whatsapp/encryption";
 import { downloadMedia } from "@/lib/whatsapp/uazapi-api";
+import { isB2Configured, uploadBuffer, publicUrl } from "@/lib/storage/b2";
 
 // ============================================================
 // Webhook de ENTRADA do provedor uazapi (uazapiGO).
@@ -174,12 +175,35 @@ async function processWebhook(body: UazapiWebhookBody) {
     ev.startsWith("message") ||
     data.text !== undefined ||
     data.content !== undefined ||
+    data.reaction !== undefined ||
     Boolean(data.fileURL);
   if (looksLikeMessage) {
     const instanceToken = channel.uazapi_instance_token
       ? decrypt(channel.uazapi_instance_token)
       : "";
     const avatarUrl = body.chat?.imagePreview || body.chat?.image || null;
+
+    // REAÇÃO: tratada ANTES do fluxo normal, para não gravar a reação como
+    // uma mensagem de texto. Toda a lógica é defensiva (sempre 200).
+    try {
+      const reaction = extractReaction(data);
+      if (reaction) {
+        await handleUazapiReaction(
+          db,
+          channel.account_id,
+          channel.created_by ?? channel.account_id,
+          channel.id,
+          data,
+          avatarUrl,
+          reaction,
+        );
+        return;
+      }
+    } catch (err) {
+      console.error("[uazapi-webhook] falha ao tratar reação:", err);
+      return; // é uma reação — não deve cair no fluxo de mensagem
+    }
+
     await processMessage(
       db,
       channel.account_id,
@@ -193,6 +217,162 @@ async function processWebhook(body: UazapiWebhookBody) {
   }
 
   // "connection" e demais eventos não têm efeito no inbox — ignoramos.
+}
+
+// ------------------------------------------------------------
+// REAÇÕES — espelham handleReaction do webhook da Meta.
+//
+// Uma reação NÃO é uma mensagem nova: é estado por (mensagem-alvo, autor).
+// Persistimos em `message_reactions` (upsert onConflict), nunca em
+// `messages`. Emoji vazio = remoção da reação.
+//
+// O uazapi entrega a reação dentro do `message` de forma variável (baileys
+// `reactionMessage`, campo `reaction` como string/objeto, ou dentro de
+// `content`). Extraímos de forma tolerante o id da msg ALVO + o emoji.
+// ------------------------------------------------------------
+
+/** Converte string-JSON ou objeto num Record; senão null. */
+function coerceObj(v: unknown): Record<string, unknown> | null {
+  if (typeof v === "string") {
+    const s = v.trim();
+    if (!s.startsWith("{")) return null;
+    try {
+      const p = JSON.parse(s);
+      return p && typeof p === "object" ? (p as Record<string, unknown>) : null;
+    } catch {
+      return null;
+    }
+  }
+  if (v && typeof v === "object") return v as Record<string, unknown>;
+  return null;
+}
+
+function str(v: unknown): string {
+  return v === undefined || v === null ? "" : String(v);
+}
+
+/**
+ * Extrai { targetId, emoji } de uma reação, tolerante ao formato. Retorna
+ * null quando não é uma reação (ou não dá para achar a msg alvo).
+ */
+function extractReaction(
+  data: UazapiMessage,
+): { targetId: string; emoji: string } | null {
+  const mt = (data.messageType ?? "").toLowerCase();
+  const isReaction =
+    mt.includes("reaction") ||
+    (data.reaction !== undefined && data.reaction !== null);
+  if (!isReaction) return null;
+
+  let targetId = "";
+  let emoji = "";
+  for (const src of [data.reaction, data.content]) {
+    const obj = coerceObj(src);
+    if (obj) {
+      // baileys embrulha em `reactionMessage`.
+      const inner = coerceObj(obj.reactionMessage) ?? obj;
+      const key = coerceObj(inner.key);
+      if (!targetId) {
+        targetId = str(
+          key?.id ??
+            inner.id ??
+            inner.messageid ??
+            inner.messageId ??
+            inner.stanzaId,
+        );
+      }
+      if (!emoji) emoji = str(inner.text ?? inner.emoji ?? inner.reaction);
+    } else if (typeof src === "string") {
+      // reação como emoji puro.
+      if (!emoji) emoji = src;
+    }
+  }
+
+  if (!targetId) return null;
+  return { targetId, emoji };
+}
+
+async function handleUazapiReaction(
+  db: SupabaseClient,
+  accountId: string,
+  configOwnerUserId: string,
+  channelId: string,
+  data: UazapiMessage,
+  avatarUrl: string | null,
+  reaction: { targetId: string; emoji: string },
+) {
+  const phone = extractPhone(data);
+  if (!phone) return;
+
+  const isGroupMsg = data.isGroup === true;
+  const contactName = isGroupMsg
+    ? data.groupName || "Grupo"
+    : data.senderName || phone;
+
+  const contact = await findOrCreateContact(
+    db,
+    accountId,
+    configOwnerUserId,
+    phone,
+    contactName,
+    avatarUrl,
+    isGroupMsg,
+  );
+  if (!contact) return;
+
+  const conversation = await findOrCreateConversation(
+    db,
+    accountId,
+    configOwnerUserId,
+    channelId,
+    contact.id,
+  );
+  if (!conversation) return;
+
+  // Acha a mensagem ALVO pelo id do WhatsApp nesta conversa. Sem alvo,
+  // ignora (a msg reagida nunca chegou até nós).
+  const { data: target } = await db
+    .from("messages")
+    .select("id")
+    .eq("conversation_id", conversation.id)
+    .eq("message_id", reaction.targetId)
+    .limit(1)
+    .maybeSingle();
+  if (!target) {
+    console.warn(
+      "[uazapi-webhook] reação sem msg alvo; ignorando:",
+      reaction.targetId,
+    );
+    return;
+  }
+
+  // Emoji vazio = remoção da reação.
+  if (!reaction.emoji) {
+    const { error: delErr } = await db
+      .from("message_reactions")
+      .delete()
+      .eq("message_id", target.id)
+      .eq("actor_type", "customer")
+      .eq("actor_id", contact.id);
+    if (delErr) {
+      console.error("[uazapi-webhook] erro ao remover reação:", delErr);
+    }
+    return;
+  }
+
+  const { error: upErr } = await db.from("message_reactions").upsert(
+    {
+      message_id: target.id,
+      conversation_id: conversation.id,
+      actor_type: "customer",
+      actor_id: contact.id,
+      emoji: reaction.emoji,
+    },
+    { onConflict: "message_id,actor_type,actor_id" },
+  );
+  if (upErr) {
+    console.error("[uazapi-webhook] erro ao gravar reação:", upErr);
+  }
 }
 
 // ------------------------------------------------------------
@@ -299,6 +479,29 @@ function mapContentType(messageType: string | undefined): string {
   return "text";
 }
 
+/** Extensão de arquivo a partir do mimetype (para a key no B2). */
+function extFromMime(mime: string): string {
+  const m = (mime || "").toLowerCase().split(";")[0].trim();
+  const map: Record<string, string> = {
+    "image/jpeg": "jpg",
+    "image/jpg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "image/gif": "gif",
+    "audio/ogg": "ogg",
+    "audio/mpeg": "mp3",
+    "audio/mp4": "m4a",
+    "audio/amr": "amr",
+    "audio/wav": "wav",
+    "video/mp4": "mp4",
+    "video/3gpp": "3gp",
+    "application/pdf": "pdf",
+  };
+  if (map[m]) return map[m];
+  const sub = m.split("/")[1] || "bin";
+  return sub.replace(/[^a-z0-9]/g, "") || "bin";
+}
+
 /** Prévia da conversa quando a mensagem não tem texto (mídia). */
 function previewText(contentType: string, text: string | null): string {
   if (text) return text;
@@ -366,6 +569,7 @@ async function processMessage(
   // Mídia inbound vem criptografada (.enc) e o `fileURL` do payload
   // costuma vir vazio; resolve para uma URL servível via /message/download.
   let mediaUrl = data.fileURL || null;
+  let mediaMime: string | null = null;
   const isMedia =
     contentType === "audio" ||
     contentType === "image" ||
@@ -377,9 +581,35 @@ async function processMessage(
       try {
         const dl = await downloadMedia(instanceToken, mid);
         if (dl.fileURL) mediaUrl = dl.fileURL;
+        if (dl.mimetype) mediaMime = dl.mimetype;
       } catch (err) {
         console.error("[uazapi-webhook] falha ao baixar mídia:", err);
       }
+    }
+  }
+
+  // PERMANÊNCIA: a URL do uazapi é temporária. Baixamos os bytes e
+  // reenviamos ao Backblaze B2, usando a URL pública permanente como
+  // media_url. Se qualquer passo falhar, mantemos a URL do uazapi
+  // (não perdemos a mensagem).
+  if (isMedia && mediaUrl && isB2Configured()) {
+    try {
+      const res = await fetch(mediaUrl);
+      if (res.ok) {
+        const bytes = new Uint8Array(await res.arrayBuffer());
+        const contentTypeHeader =
+          res.headers.get("content-type") || undefined;
+        const mime =
+          mediaMime || contentTypeHeader || "application/octet-stream";
+        const ext = extFromMime(mime);
+        const mid = data.messageid || data.id || `${Date.now()}`;
+        const key = `chat-media/account-${accountId}/${Date.now()}-${mid}.${ext}`;
+        await uploadBuffer(key, bytes, mime);
+        mediaUrl = publicUrl(key);
+      }
+    } catch (err) {
+      console.error("[uazapi-webhook] falha ao subir mídia ao B2:", err);
+      // mantém mediaUrl do uazapi como fallback
     }
   }
 
@@ -391,6 +621,7 @@ async function processMessage(
     phone,
     contactName,
     avatarUrl,
+    isGroupMsg,
   );
   if (!contact) return;
 
@@ -475,6 +706,7 @@ async function findOrCreateContact(
   phone: string,
   name: string,
   avatarUrl: string | null,
+  isGroup = false,
 ): Promise<ContactRow | null> {
   const existing = await findExistingContact(db, accountId, phone);
   if (existing) {
@@ -482,6 +714,8 @@ async function findOrCreateContact(
     if (name && name !== existing.name) patch.name = name;
     // Preenche a foto se o contato ainda não tem (ou mudou).
     if (avatarUrl && avatarUrl !== existing.avatar_url) patch.avatar_url = avatarUrl;
+    // Marca como grupo se ainda não estiver marcado.
+    if (isGroup && !existing.is_group) patch.is_group = true;
     if (Object.keys(patch).length > 0) {
       patch.updated_at = new Date().toISOString();
       await db.from("contacts").update(patch).eq("id", existing.id);
@@ -497,6 +731,7 @@ async function findOrCreateContact(
       phone,
       name: name || phone,
       avatar_url: avatarUrl,
+      is_group: isGroup,
     })
     .select()
     .single();

@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { sendTemplateMessage } from '@/lib/whatsapp/meta-api'
-import { decrypt } from '@/lib/whatsapp/encryption'
+import { getProvider } from '@/lib/whatsapp/provider'
+import {
+  resolveProviderConfig,
+  renderTemplateBody,
+} from '@/lib/whatsapp/provider-config'
 import type { SendTimeParams } from '@/lib/whatsapp/template-send-builder'
 import { isMessageTemplate } from '@/lib/whatsapp/template-row-guard'
 import {
@@ -150,7 +154,25 @@ export async function POST(request: Request) {
       )
     }
 
-    const accessToken = decrypt(config.access_token)
+    // Resolve o provider da conta (Meta OU uazapi) e decripta o token
+    // do provider em uso, em vez de assumir Meta.
+    let provider
+    let phoneNumberId: string | null
+    let accessToken: string
+    try {
+      const pc = resolveProviderConfig(config)
+      provider = getProvider(pc)
+      phoneNumberId = pc.phoneNumberId ?? null
+      accessToken = pc.accessToken ?? ''
+    } catch (err) {
+      return NextResponse.json(
+        {
+          error:
+            err instanceof Error ? err.message : 'WhatsApp not configured.',
+        },
+        { status: 400 }
+      )
+    }
 
     // Load the template row once so sendTemplateMessage can build
     // header + button components on each iteration. Loading inside
@@ -200,17 +222,27 @@ export async function POST(request: Request) {
 
       for (const variant of variants) {
         try {
-          const result = await sendTemplateMessage({
-            phoneNumberId: config.phone_number_id,
-            accessToken,
-            to: variant,
-            templateName: template_name,
-            language: template_language || 'en_US',
-            template: templateRow ?? undefined,
-            messageParams: recipient.messageParams,
-            params: recipient.params ?? [],
-          })
-          sentMessageId = result.messageId
+          let messageId: string
+          if (provider.kind === 'uazapi') {
+            // uazapi não tem templates aprovados → envia o corpo
+            // renderizado como texto simples.
+            const body = renderTemplateBody(templateRow, recipient.params)
+            const r = await provider.sendText({ to: variant, text: body })
+            messageId = r.messageId
+          } else {
+            const result = await sendTemplateMessage({
+              phoneNumberId: phoneNumberId!,
+              accessToken,
+              to: variant,
+              templateName: template_name,
+              language: template_language || 'en_US',
+              template: templateRow ?? undefined,
+              messageParams: recipient.messageParams,
+              params: recipient.params ?? [],
+            })
+            messageId = result.messageId
+          }
+          sentMessageId = messageId
           lastError = null
           break
         } catch (error) {

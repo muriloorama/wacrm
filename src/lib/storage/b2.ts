@@ -66,6 +66,26 @@ export async function presignPutUrl(
   return getSignedUrl(s3(), cmd, { expiresIn });
 }
 
+/**
+ * Sobe bytes diretamente para o bucket (uso no servidor, ex.: espelhar
+ * mídia inbound do WhatsApp para permanência). Diferente de `presignPutUrl`,
+ * que delega o PUT ao navegador.
+ */
+export async function uploadBuffer(
+  key: string,
+  bytes: Uint8Array | Buffer,
+  contentType: string,
+): Promise<void> {
+  await s3().send(
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      Body: bytes,
+      ContentType: contentType,
+    }),
+  );
+}
+
 /** URL pública permanente do objeto (bucket público). */
 export function publicUrl(key: string): string {
   const base =
