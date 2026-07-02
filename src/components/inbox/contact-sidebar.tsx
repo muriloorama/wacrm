@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { SmartAvatar } from "@/components/ui/smart-avatar";
 
 interface ContactSidebarProps {
   contact: Contact | null;
@@ -190,15 +191,12 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
           {/* Contact Info */}
           <div className="flex flex-col items-center text-center">
             <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted text-lg font-semibold text-foreground">
-              {contact.avatar_url ? (
-                <img
-                  src={contact.avatar_url}
-                  alt={displayName}
-                  className="h-16 w-16 rounded-full object-cover"
-                />
-              ) : (
-                initials
-              )}
+              <SmartAvatar
+                src={contact.avatar_url}
+                alt={displayName}
+                fallback={initials}
+                className="h-16 w-16 rounded-full object-cover"
+              />
             </div>
             <h3 className="mt-3 text-sm font-semibold text-foreground">
               {displayName}

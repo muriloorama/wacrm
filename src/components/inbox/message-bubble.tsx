@@ -313,6 +313,14 @@ export function MessageBubble({
             onPrimary={isAgent}
           />
         )}
+        {/* Nome do remetente em mensagem de grupo recebida — linha própria,
+            em negrito, acima do conteúdo. Só aparece quando é grupo (a coluna
+            fica nula fora de grupo) e a mensagem não é do agente. */}
+        {!isAgent && message.group_sender_name && (
+          <p className="mb-0.5 text-xs font-semibold text-primary">
+            {message.group_sender_name}
+          </p>
+        )}
         <MessageContent message={message} />
         <div
           className={cn(

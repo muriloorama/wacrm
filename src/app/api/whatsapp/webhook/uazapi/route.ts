@@ -55,6 +55,10 @@ interface UazapiMessage {
   reaction?: unknown;
   status?: string;
   messageTimestamp?: number; // ms
+  // Campos usados para localizar a msg ALVO de uma reação (variam por formato).
+  quotedMessageId?: string;
+  quoted?: { id?: string; messageid?: string };
+  contextInfo?: { stanzaId?: string };
 }
 
 interface UazapiWebhookBody {
@@ -191,6 +195,20 @@ async function processWebhook(body: UazapiWebhookBody) {
       return;
     }
 
+    // DIAGNÓSTICO (temporário): captura o payload BRUTO de qualquer mensagem
+    // que PAREÇA reação, para descobrirmos o formato real entregue pelo
+    // gateway. Nunca pode quebrar o processamento.
+    const reactionCandidate = isReactionCandidate(data);
+    if (reactionCandidate) {
+      try {
+        await db
+          .from("webhook_debug")
+          .insert({ kind: "reaction_candidate", payload: body });
+      } catch (err) {
+        console.error("[uazapi-webhook] falha ao gravar webhook_debug:", err);
+      }
+    }
+
     const instanceToken = channel.uazapi_instance_token
       ? decrypt(channel.uazapi_instance_token)
       : "";
@@ -216,6 +234,14 @@ async function processWebhook(body: UazapiWebhookBody) {
     } catch (err) {
       console.error("[uazapi-webhook] falha ao tratar reação:", err);
       return; // é uma reação — não deve cair no fluxo de mensagem
+    }
+
+    // Segundo guard: se NÃO extraímos reação mas a mensagem parece candidata a
+    // reação, NÃO deixamos virar mensagem de texto. Tratamos como reação sem
+    // alvo resolvido e ignoramos.
+    if (reactionCandidate) {
+      console.log("[webhook] reação sem alvo resolvido; ignorada");
+      return;
     }
 
     await processMessage(
@@ -266,6 +292,27 @@ function str(v: unknown): string {
 }
 
 /**
+ * true quando a mensagem PARECE candidata a reação (mesmo antes de
+ * conseguirmos extrair o alvo). Usado para (1) capturar o payload bruto para
+ * diagnóstico e (2) evitar que uma reação sem alvo resolvido caia no fluxo de
+ * mensagem normal e vire uma bolha de texto.
+ */
+function isReactionCandidate(data: UazapiMessage): boolean {
+  if ((data.messageType ?? "").toLowerCase().includes("reaction")) return true;
+  if (data.reaction != null) return true;
+  if (typeof data.content === "object" && data.content) {
+    try {
+      if (JSON.stringify(data.content).toLowerCase().includes("reaction")) {
+        return true;
+      }
+    } catch {
+      // JSON.stringify pode falhar (ref circular) — ignora.
+    }
+  }
+  return false;
+}
+
+/**
  * Extrai { targetId, emoji } de uma reação, tolerante ao formato. Retorna
  * null quando não é uma reação (ou não dá para achar a msg alvo).
  */
@@ -300,6 +347,29 @@ function extractReaction(
       // reação como emoji puro.
       if (!emoji) emoji = src;
     }
+  }
+
+  // Fallbacks adicionais para o id da msg ALVO (formatos variados do gateway).
+  const reactionObj = coerceObj(data.reaction);
+  const reactionKey = coerceObj(reactionObj?.key);
+  const contentObj = coerceObj(data.content);
+  if (!targetId) {
+    targetId = str(
+      data.quotedMessageId ||
+        data.quoted?.id ||
+        data.quoted?.messageid ||
+        data.contextInfo?.stanzaId ||
+        contentObj?.stanzaId ||
+        reactionKey?.id ||
+        reactionObj?.messageid,
+    );
+  }
+
+  // Fallbacks adicionais para o emoji.
+  if (!emoji) {
+    emoji = str(
+      reactionObj?.text ?? data.text ?? contentObj?.text,
+    );
   }
 
   if (!targetId) return null;
@@ -627,10 +697,11 @@ async function processMessage(
       ? String((data.content as { text?: unknown }).text ?? "")
       : "") ||
     null;
-  // Em grupo, prefixa quem enviou (a mensagem é de um participante).
-  if (isGroupMsg && !isOutgoing && contentText && data.senderName) {
-    contentText = `${data.senderName}: ${contentText}`;
-  }
+  // Em grupo (mensagem recebida), guardamos o nome de quem enviou numa coluna
+  // separada (group_sender_name) para a bolha renderizar em linha própria
+  // acima do texto. NÃO prefixamos mais no content_text.
+  const groupSenderName =
+    isGroupMsg && !isOutgoing && data.senderName ? data.senderName : null;
 
   const isMedia =
     contentType === "audio" ||
@@ -692,6 +763,7 @@ async function processMessage(
       sender_type: isOutgoing ? "agent" : "customer",
       content_type: contentType,
       content_text: contentText,
+      group_sender_name: groupSenderName,
       media_url: mediaUrl,
       message_id: data.messageid ?? null,
       status: isOutgoing ? "sent" : "delivered",
@@ -843,6 +915,9 @@ async function resolveAndMirrorAvatar(
     }
     if (!sourceAvatar) return;
     const mirrored = await mirrorAvatarToB2(sourceAvatar, accountId);
+    // Só grava se conseguimos espelhar no B2 (URL servível). Se falhou,
+    // deixa a foto vazia — o avatar mostra a inicial em vez de quebrar.
+    if (!mirrored) return;
     await db
       .from("contacts")
       .update({ avatar_url: mirrored, updated_at: new Date().toISOString() })
@@ -940,14 +1015,18 @@ type ConversationRow = any;
  * uma URL pública permanente que o navegador consegue carregar. Em qualquer
  * falha, devolve a URL original.
  */
+// Espelha a foto no B2 e retorna a URL pública (servível no navegador).
+// Retorna `null` em QUALQUER falha — nunca devolve a URL crua do WhatsApp
+// (pps.whatsapp.net quebra/expira no navegador). Assim só persistimos foto
+// que realmente carrega; sem foto, o avatar cai para a inicial.
 async function mirrorAvatarToB2(
   avatarUrl: string,
   accountId: string,
-): Promise<string> {
-  if (!isB2Configured()) return avatarUrl;
+): Promise<string | null> {
+  if (!isB2Configured()) return null;
   try {
     const res = await fetch(avatarUrl);
-    if (!res.ok) return avatarUrl;
+    if (!res.ok) return null;
     const buf = Buffer.from(await res.arrayBuffer());
     const ct = res.headers.get("content-type") || "image/jpeg";
     const ext = ct.includes("png") ? "png" : "jpg";
@@ -957,7 +1036,7 @@ async function mirrorAvatarToB2(
     await uploadBuffer(key, buf, ct);
     return publicUrl(key);
   } catch {
-    return avatarUrl;
+    return null;
   }
 }
 
@@ -966,6 +1045,11 @@ async function mirrorAvatarToB2(
  * payload não a trouxe (típico de mensagens de ENTRADA). Usa o servidor do
  * provedor + o token da instância do canal. Resiliente: qualquer falha
  * (rede, timeout, formato) apenas devolve null — nunca quebra o webhook.
+ *
+ * Endpoint correto: POST /chat/GetNameAndImageURL com { number }. Devolve um
+ * objeto com `imagePreview` (miniatura) e `image` (foto cheia), entre outros
+ * campos. Preferimos a miniatura; caímos para a foto cheia. (O antigo
+ * /chat/find vinha vazio — causa raiz das fotos não aparecerem.)
  */
 async function fetchAvatarFromGateway(
   chatid: string,
@@ -973,7 +1057,10 @@ async function fetchAvatarFromGateway(
 ): Promise<string | null> {
   const server = process.env.UAZAPI_SERVER_URL;
   if (!server || !instanceToken || !chatid) return null;
-  const number = chatid.split("@")[0].replace(/\D/g, "");
+  // Para grupo, o "number" é o próprio JID (…@g.us); para contato, os dígitos.
+  const number = chatid.includes("@g.us")
+    ? chatid
+    : chatid.split("@")[0].replace(/\D/g, "");
   if (!number) return null;
 
   try {
@@ -981,43 +1068,30 @@ async function fetchAvatarFromGateway(
     const timer = setTimeout(() => controller.abort(), 8000);
     let res: Response;
     try {
-      res = await fetch(`${server.replace(/\/+$/, "")}/chat/find`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          token: instanceToken,
+      res = await fetch(
+        `${server.replace(/\/+$/, "")}/chat/GetNameAndImageURL`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            token: instanceToken,
+          },
+          body: JSON.stringify({ number }),
+          signal: controller.signal,
         },
-        body: JSON.stringify({
-          operator: "AND",
-          sort: "-messageTimestamp",
-          limit: 200,
-        }),
-        signal: controller.signal,
-      });
+      );
     } finally {
       clearTimeout(timer);
     }
     if (!res.ok) return null;
 
-    const json = (await res.json()) as unknown;
-    const list: unknown[] = Array.isArray(json)
-      ? json
-      : json && typeof json === "object" && Array.isArray((json as { chats?: unknown }).chats)
-        ? ((json as { chats: unknown[] }).chats)
-        : [];
-
-    for (const item of list) {
-      if (!item || typeof item !== "object") continue;
-      const c = item as Record<string, unknown>;
-      const waChatid = String(
-        c.wa_chatid ?? c.chatid ?? c.id ?? "",
-      ).replace(/\D/g, "");
-      if (waChatid && waChatid.includes(number)) {
-        const img = c.imagePreview ?? c.image;
-        if (img) return String(img);
-      }
-    }
-    return null;
+    const json = (await res.json()) as {
+      imagePreview?: unknown;
+      image?: unknown;
+    } | null;
+    if (!json || typeof json !== "object") return null;
+    const img = json.imagePreview || json.image;
+    return img ? String(img) : null;
   } catch (err) {
     console.error("[uazapi-webhook] falha ao buscar foto no gateway:", err);
     return null;

@@ -49,6 +49,7 @@ import { deleteAccountMedia } from "@/lib/storage/upload-media";
 import { TemplatePicker } from "./template-picker";
 import { buildReplyPreview } from "./reply-quote";
 import { toast } from "sonner";
+import { SmartAvatar } from "@/components/ui/smart-avatar";
 
 interface ReplyDraft {
   id: string;
@@ -881,15 +882,12 @@ export function MessageThread({
             </button>
           )}
           <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-muted text-sm font-medium text-foreground">
-            {contact.avatar_url ? (
-              <img
-                src={contact.avatar_url}
-                alt={displayName}
-                className="h-9 w-9 rounded-full object-cover"
-              />
-            ) : (
-              displayName.charAt(0).toUpperCase()
-            )}
+            <SmartAvatar
+              src={contact.avatar_url}
+              alt={displayName}
+              fallback={displayName.charAt(0).toUpperCase()}
+              className="h-9 w-9 rounded-full object-cover"
+            />
           </div>
           <div className="min-w-0">
             <h2 className="truncate text-sm font-semibold text-foreground">{displayName}</h2>

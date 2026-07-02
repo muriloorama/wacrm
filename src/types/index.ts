@@ -214,6 +214,12 @@ export interface Message {
   created_at: string;
   reply_to_message_id?: string;
   /**
+   * Nome do remetente numa mensagem de GRUPO recebida. Preenchido só para
+   * mensagens de grupo (não do agente); nulo fora de grupo. A bolha o
+   * renderiza em negrito numa linha própria acima do conteúdo.
+   */
+  group_sender_name?: string | null;
+  /**
    * Only set when `content_type === 'interactive'` — the stable id of
    * the button or list row the customer tapped. The Flows engine uses
    * this to route the next node; the inbox bubble uses it as a styling

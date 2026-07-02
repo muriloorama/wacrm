@@ -43,6 +43,7 @@ import {
 } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
+import { SmartAvatar } from "@/components/ui/smart-avatar";
 
 /** Canal de WhatsApp para o seletor de caixa de entrada. */
 type ChannelOption = { id: string; name: string };
@@ -843,15 +844,12 @@ function ConversationItem({
     >
       {/* Avatar */}
       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-medium text-foreground">
-        {contact?.avatar_url ? (
-          <img
-            src={contact.avatar_url}
-            alt={displayName}
-            className="h-10 w-10 rounded-full object-cover"
-          />
-        ) : (
-          initials
-        )}
+        <SmartAvatar
+          src={contact?.avatar_url}
+          alt={displayName}
+          fallback={initials}
+          className="h-10 w-10 rounded-full object-cover"
+        />
       </div>
 
       {/* Content */}
