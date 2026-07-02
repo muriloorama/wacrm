@@ -35,6 +35,9 @@ interface Profile {
   beta_features: string[];
   account_id: string | null;
   account_role: AccountRole | null;
+  /** Global super-admin flag (profiles.is_super_admin). Gates the
+   *  /admin panel + its nav link. Defaults false for everyone. */
+  is_super_admin: boolean;
 }
 
 interface AccountSummary {
@@ -138,7 +141,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { data, error } = await supabase
         .from("profiles")
         .select(
-          "id, full_name, email, avatar_url, role, beta_features, account_id, account_role",
+          "id, full_name, email, avatar_url, role, beta_features, account_id, account_role, is_super_admin",
         )
         .eq("user_id", userId)
         .maybeSingle();
@@ -212,6 +215,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           beta_features: data.beta_features ?? [],
           account_id: data.account_id ?? null,
           account_role: accountRole,
+          // Coluna adicionada na migration 031. Narrow defensivo para
+          // deployments antigos onde ainda lê null/undefined → false.
+          is_super_admin: data.is_super_admin === true,
         });
         setAccount(accountRow);
       } else {

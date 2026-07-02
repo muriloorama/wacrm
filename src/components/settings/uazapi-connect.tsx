@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import {
   CheckCircle2,
   Loader2,
+  Pencil,
   Plus,
   QrCode,
   RefreshCw,
@@ -84,6 +85,11 @@ export function UazapiConnect({ onStatusChange }: UazapiConnectProps) {
 
   // Diálogo do QR Code (para canal novo ou reconexão).
   const [qrView, setQrView] = useState<QrView | null>(null);
+
+  // Diálogo "Renomear canal".
+  const [renameTarget, setRenameTarget] = useState<Channel | null>(null);
+  const [renameName, setRenameName] = useState('');
+  const [renaming, setRenaming] = useState(false);
 
   // Ações por canal em andamento (reconectar/excluir), para desabilitar botões.
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -321,6 +327,47 @@ export function UazapiConnect({ onStatusChange }: UazapiConnectProps) {
     }
   }
 
+  // ---- Renomear canal ----
+  function openRename(channel: Channel) {
+    setRenameTarget(channel);
+    setRenameName(channel.name);
+  }
+
+  async function handleRename() {
+    if (!renameTarget) return;
+    const name = renameName.trim();
+    if (!name) {
+      toast.error('Digite um nome para o canal.');
+      return;
+    }
+    if (name === renameTarget.name) {
+      setRenameTarget(null);
+      return;
+    }
+    setRenaming(true);
+    try {
+      const res = await fetch('/api/whatsapp/uazapi/connect', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channelId: renameTarget.id, name }),
+      });
+      const data = (await res.json()) as { channel?: Channel; error?: string };
+      if (!res.ok) {
+        toast.error(data.error || 'Falha ao renomear o canal.');
+        return;
+      }
+      setRenameTarget(null);
+      setRenameName('');
+      await fetchChannels();
+      toast.success('Canal renomeado.');
+    } catch (err) {
+      console.error('rename channel error:', err);
+      toast.error('Falha ao renomear. Verifique a rede e tente novamente.');
+    } finally {
+      setRenaming(false);
+    }
+  }
+
   function handleCloseQr() {
     stopPolling();
     qrChannelIdRef.current = null;
@@ -413,6 +460,17 @@ export function UazapiConnect({ onStatusChange }: UazapiConnectProps) {
                   <Button
                     variant="outline"
                     size="sm"
+                    onClick={() => openRename(channel)}
+                    disabled={busyId === channel.id}
+                    aria-label="Renomear canal"
+                    title="Renomear canal"
+                    className="border-border text-muted-foreground hover:text-foreground hover:bg-muted"
+                  >
+                    <Pencil className="size-4" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
                     onClick={() => handleReconnect(channel)}
                     disabled={busyId === channel.id}
                     className="border-border text-muted-foreground hover:text-foreground hover:bg-muted"
@@ -491,6 +549,63 @@ export function UazapiConnect({ onStatusChange }: UazapiConnectProps) {
                   <QrCode className="size-4" />
                   Criar e gerar QR
                 </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Diálogo: renomear canal */}
+      <Dialog
+        open={renameTarget !== null}
+        onOpenChange={(o) => {
+          if (!o && !renaming) setRenameTarget(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Renomear canal</DialogTitle>
+            <DialogDescription>
+              Escolha um novo nome para identificar esta caixa de entrada.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Input
+              autoFocus
+              value={renameName}
+              onChange={(e) => setRenameName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !renaming) {
+                  e.preventDefault();
+                  handleRename();
+                }
+              }}
+              placeholder="Nome do canal"
+              maxLength={60}
+              className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setRenameTarget(null)}
+              disabled={renaming}
+              className="border-border text-muted-foreground hover:text-foreground hover:bg-muted"
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleRename}
+              disabled={renaming}
+              className="bg-primary hover:bg-primary/90 text-primary-foreground"
+            >
+              {renaming ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  Salvando...
+                </>
+              ) : (
+                'Salvar'
               )}
             </Button>
           </DialogFooter>

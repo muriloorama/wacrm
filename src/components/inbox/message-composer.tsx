@@ -93,6 +93,12 @@ interface MediaDraft {
 interface MessageComposerProps {
   conversationId: string;
   sessionExpired: boolean;
+  /**
+   * Se o botão de modelos (templates) deve aparecer. Modelos e a janela de
+   * 24h são exclusivos da Meta (Cloud API); em canais uazapi (QR Code) o
+   * botão fica escondido. Default `false` — só a Meta liga explicitamente.
+   */
+  showTemplates?: boolean;
   onSend: (text: string, replyToId?: string) => void;
   onSendMedia: (payload: SendMediaPayload) => void;
   onOpenTemplates: () => void;
@@ -114,6 +120,7 @@ const OPUS_ENCODER_PATH = "/opus/encoderWorker.min.js";
 export function MessageComposer({
   conversationId,
   sessionExpired,
+  showTemplates = false,
   onSend,
   onSendMedia,
   onOpenTemplates,
@@ -511,17 +518,21 @@ export function MessageComposer({
             </DropdownMenuContent>
           </DropdownMenu>
 
-          <GatedButton
-            variant="ghost"
-            size="sm"
-            canAct={!readOnly}
-            gateReason="enviar mensagens"
-            title={readOnly ? undefined : "Enviar modelo"}
-            className="h-9 w-9 shrink-0 p-0 text-muted-foreground hover:text-foreground"
-            onClick={onOpenTemplates}
-          >
-            <LayoutTemplate className="h-4 w-4" />
-          </GatedButton>
+          {/* Botão de modelos — exclusivo da Meta. Escondido em canais
+              uazapi (QR Code), onde templates não existem. */}
+          {showTemplates && (
+            <GatedButton
+              variant="ghost"
+              size="sm"
+              canAct={!readOnly}
+              gateReason="enviar mensagens"
+              title={readOnly ? undefined : "Enviar modelo"}
+              className="h-9 w-9 shrink-0 p-0 text-muted-foreground hover:text-foreground"
+              onClick={onOpenTemplates}
+            >
+              <LayoutTemplate className="h-4 w-4" />
+            </GatedButton>
+          )}
 
           <textarea
             ref={textareaRef}

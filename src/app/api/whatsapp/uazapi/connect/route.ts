@@ -283,6 +283,70 @@ export async function GET(request: Request) {
 }
 
 /**
+ * PATCH — renomeia um canal (caixa de entrada).
+ *   body: { channelId, name }
+ * Atualiza apenas whatsapp_channels.name. Admin-only (RLS de UPDATE) —
+ * um erro de escrita é tratado como 403. Retorna o canal atualizado.
+ */
+export async function PATCH(request: Request) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return NextResponse.json({ error: "Você não está autenticado." }, { status: 401 });
+  }
+
+  let channelId: string | undefined;
+  let name: string | undefined;
+  try {
+    ({ channelId, name } = (await request.json()) as {
+      channelId?: string;
+      name?: string;
+    });
+  } catch {
+    // corpo inválido → tratado como campos ausentes abaixo.
+  }
+
+  if (!channelId) {
+    return NextResponse.json({ error: "Canal não informado." }, { status: 400 });
+  }
+  const trimmed = (name ?? "").trim();
+  if (!trimmed) {
+    return NextResponse.json(
+      { error: "Digite um nome para o canal." },
+      { status: 400 },
+    );
+  }
+
+  const { data: updated, error: updateErr } = await supabase
+    .from("whatsapp_channels")
+    .update({ name: trimmed, updated_at: new Date().toISOString() })
+    .eq("id", channelId)
+    .select("id, name, status, phone")
+    .maybeSingle();
+
+  if (updateErr) {
+    return NextResponse.json(
+      { error: "Sem permissão para renomear canais (apenas admin)." },
+      { status: 403 },
+    );
+  }
+  if (!updated) {
+    return NextResponse.json({ error: "Canal não encontrado." }, { status: 404 });
+  }
+
+  return NextResponse.json({
+    channel: {
+      id: updated.id,
+      name: (updated.name as string) ?? "Canal",
+      status: updated.status ?? "disconnected",
+      phone: updated.phone ?? null,
+    },
+  });
+}
+
+/**
  * DELETE — remove um canal: apaga a instância no provedor (best-effort)
  * e a linha em whatsapp_channels. Admin-only (RLS).
  *   body: { channelId }

@@ -281,6 +281,25 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                 </li>
               );
             })}
+            {/* Super Admin — flag global (profiles.is_super_admin). Só
+                aparece para quem tem a flag; todo mundo mais nem vê o
+                link (a página /admin também barra no servidor). */}
+            {profile?.is_super_admin ? (
+              <li>
+                <Link
+                  href="/admin"
+                  className={cn(
+                    "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors lg:py-2",
+                    pathname.startsWith("/admin")
+                      ? "bg-primary/10 text-primary"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                  )}
+                >
+                  <Shield className="h-4 w-4" />
+                  Super Admin
+                </Link>
+              </li>
+            ) : null}
           </ul>
         </nav>
 

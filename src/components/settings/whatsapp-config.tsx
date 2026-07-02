@@ -210,16 +210,12 @@ export function WhatsAppConfig() {
   useEffect(() => {
     if (methodResolvedRef.current) return;
     if (loading) return;
-    if (phoneNumberId) {
-      methodResolvedRef.current = true;
-      setMethod('meta');
-      return;
-    }
-    // Sem Meta: aguarda a sondagem do QR para decidir.
+    // A API Oficial (Meta) está "Em breve" — o padrão vai sempre para o QR
+    // Code (único método disponível hoje). Aguarda a sondagem do QR.
     if (!qrProbed) return;
     methodResolvedRef.current = true;
-    setMethod(qrHasSession ? 'qr' : null);
-  }, [loading, phoneNumberId, qrProbed, qrHasSession]);
+    setMethod('qr');
+  }, [loading, qrProbed, qrHasSession]);
 
   async function handleSave() {
     if (!phoneNumberId.trim()) {
@@ -446,6 +442,7 @@ export function WhatsAppConfig() {
           icon={<Building2 className="size-5" />}
           title="API Oficial (Meta)"
           description="Conecte via WhatsApp Business API com suas credenciais da Meta."
+          comingSoon
         />
         {qrAvailable && (
           <MethodCard
@@ -950,29 +947,34 @@ function MethodCard({
   icon,
   title,
   description,
+  comingSoon = false,
 }: {
   active: boolean;
   onClick: () => void;
   icon: ReactNode;
   title: string;
   description: string;
+  comingSoon?: boolean;
 }) {
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={comingSoon ? undefined : onClick}
+      disabled={comingSoon}
       aria-pressed={active}
       className={
         'flex items-start gap-3 rounded-lg border p-4 text-left transition-colors ' +
-        (active
-          ? 'border-primary bg-primary/5 ring-1 ring-primary'
-          : 'border-border bg-card hover:border-primary/50 hover:bg-muted/50')
+        (comingSoon
+          ? 'cursor-not-allowed border-border bg-card opacity-60'
+          : active
+            ? 'border-primary bg-primary/5 ring-1 ring-primary'
+            : 'border-border bg-card hover:border-primary/50 hover:bg-muted/50')
       }
     >
       <span
         className={
           'flex size-10 shrink-0 items-center justify-center rounded-md ' +
-          (active
+          (active && !comingSoon
             ? 'bg-primary text-primary-foreground'
             : 'bg-muted text-muted-foreground')
         }
@@ -982,7 +984,14 @@ function MethodCard({
       <span className="space-y-1">
         <span className="flex items-center gap-2 font-medium text-foreground">
           {title}
-          {active && <CheckCircle2 className="size-4 text-primary" />}
+          {comingSoon && (
+            <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Em breve
+            </span>
+          )}
+          {active && !comingSoon && (
+            <CheckCircle2 className="size-4 text-primary" />
+          )}
         </span>
         <span className="block text-sm text-muted-foreground">{description}</span>
       </span>

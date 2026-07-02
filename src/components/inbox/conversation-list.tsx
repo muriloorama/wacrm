@@ -28,6 +28,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Badge } from "@/components/ui/badge";
 
 /** Canal de WhatsApp para o seletor de caixa de entrada. */
 type ChannelOption = { id: string; name: string };
@@ -199,6 +200,15 @@ export function ConversationList({
     for (const t of tags) m.set(t.id, t);
     return m;
   }, [tags]);
+
+  // Mapa canal → nome, para exibir de qual caixa de entrada é cada conversa.
+  // Só faz sentido quando há mais de um canal; com um único, o badge é ruído.
+  const channelNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const ch of channels) m.set(ch.id, ch.name);
+    return m;
+  }, [channels]);
+  const showChannelBadge = channels.length > 1;
 
   const filtered = useMemo(() => {
     let result = conversations;
@@ -492,6 +502,11 @@ export function ConversationList({
                 conversation={conv}
                 isActive={conv.id === activeConversationId}
                 onSelect={handleSelect}
+                channelName={
+                  showChannelBadge && conv.channel_id
+                    ? channelNameById.get(conv.channel_id) ?? null
+                    : null
+                }
               />
             ))}
           </div>
@@ -505,12 +520,15 @@ interface ConversationItemProps {
   conversation: Conversation;
   isActive: boolean;
   onSelect: (conversation: Conversation) => void;
+  /** Nome do canal (caixa de entrada) da conversa; null oculta o badge. */
+  channelName: string | null;
 }
 
 function ConversationItem({
   conversation,
   isActive,
   onSelect,
+  channelName,
 }: ConversationItemProps) {
   const contact = conversation.contact;
   const displayName = contact?.name || contact?.phone || "Desconhecido";
@@ -556,6 +574,14 @@ function ConversationItem({
           </span>
           <span className="shrink-0 text-[10px] text-muted-foreground">{timeAgo}</span>
         </div>
+        {channelName && (
+          <Badge
+            variant="secondary"
+            className="mt-1 h-4 px-1.5 text-[10px] font-normal"
+          >
+            {channelName}
+          </Badge>
+        )}
         <div className="mt-0.5 flex items-center justify-between gap-2">
           <p className="truncate text-xs text-muted-foreground">
             {conversation.last_message_text || "Nenhuma mensagem ainda"}

@@ -37,6 +37,7 @@ interface UazapiMessage {
   senderName?: string;
   chatid?: string;
   isGroup?: boolean;
+  groupName?: string;
   fromMe?: boolean;
   wasSentByApi?: boolean;
   text?: string;
@@ -338,23 +339,30 @@ async function processMessage(
 ) {
   // Ignora só o que o PRÓPRIO CRM enviou pela API (senão duplicaria o que
   // já está no banco). Mensagens enviadas do CELULAR (fromMe) são
-  // espelhadas como saída, para o inbox refletir o aparelho. Grupos: fora
-  // por enquanto.
+  // espelhadas como saída, para o inbox refletir o aparelho.
   if (data.wasSentByApi === true) return;
-  if (data.isGroup === true) return;
   const isOutgoing = data.fromMe === true;
+  const isGroupMsg = data.isGroup === true;
 
   const phone = extractPhone(data);
   if (!phone) return;
 
-  const contactName = data.senderName || phone;
+  // Em grupo, o "contato" é o próprio grupo (chatid=...@g.us); o nome é o
+  // nome do grupo. Fora de grupo, é o nome do remetente.
+  const contactName = isGroupMsg
+    ? data.groupName || "Grupo"
+    : data.senderName || phone;
   const contentType = mapContentType(data.messageType);
-  const contentText =
+  let contentText =
     data.text ||
     (data.content && typeof data.content === "object" && "text" in data.content
       ? String((data.content as { text?: unknown }).text ?? "")
       : "") ||
     null;
+  // Em grupo, prefixa quem enviou (a mensagem é de um participante).
+  if (isGroupMsg && !isOutgoing && contentText && data.senderName) {
+    contentText = `${data.senderName}: ${contentText}`;
+  }
   // Mídia inbound vem criptografada (.enc) e o `fileURL` do payload
   // costuma vir vazio; resolve para uma URL servível via /message/download.
   let mediaUrl = data.fileURL || null;

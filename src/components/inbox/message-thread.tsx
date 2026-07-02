@@ -196,6 +196,12 @@ export function MessageThread({
     }, 700);
   }, [isRefreshing, onRefresh]);
   const [replyTo, setReplyTo] = useState<ReplyDraft | null>(null);
+  // Provedor do canal da conversa. A janela de 24h e os modelos
+  // (templates) são exclusivos da Meta (Cloud API); no uazapi (QR Code /
+  // WhatsApp Web) não existem, então só habilitamos esses elementos quando
+  // o provedor for 'meta'. `null` = ainda carregando → tratado como não-Meta
+  // para evitar piscar a UI de 24h/modelos indevidamente.
+  const [isMetaChannel, setIsMetaChannel] = useState(false);
 
   // Profiles are bounded by RLS to rows the current user is allowed to
   // see — today that's just the current user, but the dropdown keeps the
@@ -261,6 +267,45 @@ export function MessageThread({
 
   const conversationId = conversation?.id;
   const hasUnread = (conversation?.unread_count ?? 0) > 0;
+  const channelId = conversation?.channel_id ?? null;
+
+  // Descobre o provedor do canal da conversa ativa. Prioridade: o canal
+  // (whatsapp_channels) apontado por channel_id; sem canal, cai no provedor
+  // padrão da conta (whatsapp_config). Só marca Meta quando provider ===
+  // 'meta' — assim a janela de 24h e o botão de modelos só aparecem na
+  // Cloud API oficial. Hoje tudo é uazapi, então na prática ficam ocultos.
+  useEffect(() => {
+    if (!conversationId) {
+      setIsMetaChannel(false);
+      return;
+    }
+    const supabase = createClient();
+    let cancelled = false;
+
+    (async () => {
+      let provider: string | null | undefined;
+      if (channelId) {
+        const { data } = await supabase
+          .from("whatsapp_channels")
+          .select("provider")
+          .eq("id", channelId)
+          .maybeSingle();
+        provider = data?.provider;
+      } else {
+        const { data } = await supabase
+          .from("whatsapp_config")
+          .select("provider")
+          .maybeSingle();
+        provider = data?.provider;
+      }
+      if (cancelled) return;
+      setIsMetaChannel(provider === "meta");
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [conversationId, channelId]);
 
   // Fetch messages whenever the selected conversation changes. Kept
   // separate from the unread-reset effect so that incoming messages
@@ -842,18 +887,21 @@ export function MessageThread({
             <h2 className="truncate text-sm font-semibold text-foreground">{displayName}</h2>
             <p className="truncate text-xs text-muted-foreground">{contact.phone}</p>
           </div>
-          {/* Session timer badge — hidden on the narrowest phones so
-              the name + back arrow keep their room. */}
-          <Badge
-            variant="outline"
-            className={cn(
-              "ml-1 hidden gap-1 border-border text-[10px] sm:inline-flex sm:ml-2",
-              sessionInfo.expired ? "text-red-400" : "text-primary"
-            )}
-          >
-            <Clock className="h-3 w-3" />
-            {sessionInfo.remaining}
-          </Badge>
+          {/* Session timer badge — janela de 24h só existe na Meta, então
+              só renderiza quando o canal for Meta. Escondido nos telefones
+              mais estreitos para o nome + seta manterem o espaço. */}
+          {isMetaChannel && (
+            <Badge
+              variant="outline"
+              className={cn(
+                "ml-1 hidden gap-1 border-border text-[10px] sm:inline-flex sm:ml-2",
+                sessionInfo.expired ? "text-red-400" : "text-primary"
+              )}
+            >
+              <Clock className="h-3 w-3" />
+              {sessionInfo.remaining}
+            </Badge>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -1074,7 +1122,11 @@ export function MessageThread({
       {/* Composer */}
       <MessageComposer
         conversationId={conversation.id}
-        sessionExpired={sessionInfo.expired}
+        // Janela de 24h é exclusiva da Meta — no uazapi nunca "expira",
+        // então o aviso de sessão e o bloqueio de inputs ficam desligados.
+        sessionExpired={isMetaChannel && sessionInfo.expired}
+        // Modelos (templates) só existem na Meta; escondemos o botão fora dela.
+        showTemplates={isMetaChannel}
         onSend={handleSend}
         onSendMedia={handleSendMedia}
         onOpenTemplates={handleOpenTemplates}
