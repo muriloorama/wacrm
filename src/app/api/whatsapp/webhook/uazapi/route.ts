@@ -298,17 +298,15 @@ function str(v: unknown): string {
  * mensagem normal e vire uma bolha de texto.
  */
 function isReactionCandidate(data: UazapiMessage): boolean {
+  // Sinal confiável: o gateway usa messageType "ReactionMessage".
   if ((data.messageType ?? "").toLowerCase().includes("reaction")) return true;
-  if (data.reaction != null) return true;
-  if (typeof data.content === "object" && data.content) {
-    try {
-      if (JSON.stringify(data.content).toLowerCase().includes("reaction")) {
-        return true;
-      }
-    } catch {
-      // JSON.stringify pode falhar (ref circular) — ignora.
-    }
+  // `reaction` é uma STRING com o id da msg ALVO quando é reação de verdade.
+  // Em mensagem NORMAL vem "" (vazia) — não pode ser candidata, senão
+  // descartaríamos mensagens de texto comuns (bug que travou a chegada).
+  if (typeof data.reaction === "string" && data.reaction.trim() !== "") {
+    return true;
   }
+  if (data.reaction != null && typeof data.reaction === "object") return true;
   return false;
 }
 
@@ -320,57 +318,40 @@ function extractReaction(
   data: UazapiMessage,
 ): { targetId: string; emoji: string } | null {
   const mt = (data.messageType ?? "").toLowerCase();
+  const reactionStr =
+    typeof data.reaction === "string" ? data.reaction.trim() : "";
+  const reactionObj = coerceObj(data.reaction);
   const isReaction =
-    mt.includes("reaction") ||
-    (data.reaction !== undefined && data.reaction !== null);
+    mt.includes("reaction") || reactionStr !== "" || reactionObj !== null;
   if (!isReaction) return null;
 
-  let targetId = "";
-  let emoji = "";
-  for (const src of [data.reaction, data.content]) {
-    const obj = coerceObj(src);
-    if (obj) {
-      // baileys embrulha em `reactionMessage`.
-      const inner = coerceObj(obj.reactionMessage) ?? obj;
-      const key = coerceObj(inner.key);
-      if (!targetId) {
-        targetId = str(
-          key?.id ??
-            inner.id ??
-            inner.messageid ??
-            inner.messageId ??
-            inner.stanzaId,
-        );
-      }
-      if (!emoji) emoji = str(inner.text ?? inner.emoji ?? inner.reaction);
-    } else if (typeof src === "string") {
-      // reação como emoji puro.
-      if (!emoji) emoji = src;
-    }
-  }
-
-  // Fallbacks adicionais para o id da msg ALVO (formatos variados do gateway).
-  const reactionObj = coerceObj(data.reaction);
-  const reactionKey = coerceObj(reactionObj?.key);
+  // Formato REAL do gateway (messageType "ReactionMessage"):
+  //   content = { key: { ID: "<id da msg ALVO>" }, text: "👍" }
+  //   reaction = "<id da msg ALVO>" (string)     text = "👍"
+  // Atenção: a chave é `ID` MAIÚSCULO; e `reaction` é o ALVO, não o emoji.
   const contentObj = coerceObj(data.content);
-  if (!targetId) {
-    targetId = str(
-      data.quotedMessageId ||
-        data.quoted?.id ||
-        data.quoted?.messageid ||
-        data.contextInfo?.stanzaId ||
-        contentObj?.stanzaId ||
-        reactionKey?.id ||
-        reactionObj?.messageid,
-    );
-  }
+  const inner = coerceObj(contentObj?.reactionMessage) ?? contentObj;
+  const key = coerceObj(inner?.key);
+  const reactionKey = coerceObj(reactionObj?.key);
 
-  // Fallbacks adicionais para o emoji.
-  if (!emoji) {
-    emoji = str(
-      reactionObj?.text ?? data.text ?? contentObj?.text,
-    );
-  }
+  const targetId = str(
+    key?.ID ??
+      key?.id ??
+      reactionKey?.ID ??
+      reactionKey?.id ??
+      (reactionStr || undefined) ??
+      inner?.stanzaId ??
+      inner?.id ??
+      inner?.messageid ??
+      data.quotedMessageId ??
+      data.quoted?.id ??
+      data.contextInfo?.stanzaId,
+  );
+
+  // Emoji: SEMPRE do texto (content.text / data.text). Nunca do campo
+  // `reaction`, que carrega o id do alvo. Emoji vazio = remoção da reação.
+  let emoji = str(inner?.text ?? contentObj?.text ?? data.text);
+  if (emoji && emoji === targetId) emoji = "";
 
   if (!targetId) return null;
   return { targetId, emoji };
