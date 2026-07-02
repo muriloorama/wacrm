@@ -24,7 +24,13 @@ type ConnectState = {
 
 const POLL_INTERVAL_MS = 3000;
 
-export function UazapiConnect() {
+type UazapiConnectProps = {
+  // Reporta o status da conexão por QR para o componente pai, que o usa
+  // para decidir o método de conexão padrão ao abrir o painel.
+  onStatusChange?: (state: ConnectState | null) => void;
+};
+
+export function UazapiConnect({ onStatusChange }: UazapiConnectProps) {
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [connecting, setConnecting] = useState(false);
   const [state, setState] = useState<ConnectState | null>(null);
@@ -33,6 +39,9 @@ export function UazapiConnect() {
   // Kept in a ref so the polling loop always reads the latest value
   // without re-subscribing the interval on every render.
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Mantém a callback mais recente sem forçar a recriação de fetchStatus.
+  const onStatusChangeRef = useRef(onStatusChange);
+  onStatusChangeRef.current = onStatusChange;
 
   const stopPolling = useCallback(() => {
     if (pollingRef.current) {
@@ -46,14 +55,17 @@ export function UazapiConnect() {
       const res = await fetch('/api/whatsapp/uazapi/connect', { method: 'GET' });
       const data = (await res.json()) as ConnectState & { error?: string };
       if (!res.ok) {
-        toast.error(data.error || 'Falha ao consultar o status do uazapi.');
+        toast.error(data.error || 'Falha ao consultar o status da conexão via QR Code.');
+        onStatusChangeRef.current?.(null);
         return null;
       }
       setState(data);
+      onStatusChangeRef.current?.(data);
       return data;
     } catch (err) {
-      console.error('uazapi status error:', err);
-      toast.error('Falha ao consultar o status do uazapi. Verifique a rede.');
+      console.error('qr status error:', err);
+      toast.error('Falha ao consultar o status da conexão via QR Code. Verifique a rede.');
+      onStatusChangeRef.current?.(null);
       return null;
     }
   }, []);
@@ -99,7 +111,7 @@ export function UazapiConnect() {
       };
 
       if (!res.ok) {
-        toast.error(data.error || 'Falha ao conectar ao uazapi.');
+        toast.error(data.error || 'Falha ao gerar o QR Code.');
         return;
       }
 
@@ -124,8 +136,8 @@ export function UazapiConnect() {
         toast.error('O servidor não retornou um QR code. Tente atualizar o status.');
       }
     } catch (err) {
-      console.error('uazapi connect error:', err);
-      toast.error('Falha ao conectar ao uazapi. Verifique a rede e tente novamente.');
+      console.error('qr connect error:', err);
+      toast.error('Falha ao gerar o QR Code. Verifique a rede e tente novamente.');
     } finally {
       setConnecting(false);
     }
@@ -155,7 +167,7 @@ export function UazapiConnect() {
       <CardHeader>
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <div>
-            <CardTitle className="text-foreground">Conectar via QR (uazapi)</CardTitle>
+            <CardTitle className="text-foreground">Conexão via QR Code</CardTitle>
             <CardDescription className="text-muted-foreground">
               Conecte um número do WhatsApp escaneando um QR code — sem precisar da
               API oficial da Meta.

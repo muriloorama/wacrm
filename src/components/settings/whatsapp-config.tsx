@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import {
   Eye,
@@ -13,6 +13,8 @@ import {
   Zap,
   AlertTriangle,
   RotateCcw,
+  Building2,
+  QrCode,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
@@ -35,6 +37,9 @@ const MASKED_TOKEN = '••••••••••••••••';
 
 type ConnectionStatus = 'connected' | 'disconnected' | 'unknown';
 type ResetReason = 'token_corrupted' | 'meta_api_error' | null;
+type ConnectionMethod = 'meta' | 'qr';
+// Estado reportado pelo componente de QR (subconjunto do ConnectState dele).
+type QrStatus = { configured: boolean; hasInstance: boolean; connected: boolean };
 
 export function WhatsAppConfig() {
   const supabase = createClient();
@@ -61,6 +66,21 @@ export function WhatsAppConfig() {
   // tab regains focus. Without this, that churn calls fetchConfig()
   // again and overwrites whatever the user typed but hadn't saved yet.
   const loadedAccountIdRef = useRef<string | null>(null);
+
+  // Método de conexão selecionado. `null` = o usuário ainda não escolheu
+  // (mostra o seletor sem nada selecionado). O padrão é resolvido uma única
+  // vez, após carregar a config da Meta e sondar o status do QR.
+  const [method, setMethod] = useState<ConnectionMethod | null>(null);
+  const [qrProbed, setQrProbed] = useState(false);
+  const [qrConfigured, setQrConfigured] = useState<boolean | null>(null);
+  const [qrHasSession, setQrHasSession] = useState(false);
+  const methodResolvedRef = useRef(false);
+
+  const handleQrStatus = useCallback((s: QrStatus | null) => {
+    setQrProbed(true);
+    setQrConfigured(s ? s.configured : null);
+    setQrHasSession(Boolean(s && (s.connected || s.hasInstance)));
+  }, []);
 
   const [phoneNumberId, setPhoneNumberId] = useState('');
   const [wabaId, setWabaId] = useState('');
@@ -180,6 +200,26 @@ export function WhatsAppConfig() {
     loadedAccountIdRef.current = accountId;
     fetchConfig(accountId);
   }, [authLoading, profileLoading, user?.id, accountId, fetchConfig]);
+
+  // Resolve o método padrão uma única vez ao abrir:
+  //   1) Meta já configurada (phone_number_id preenchido) → "API Oficial".
+  //   2) senão, se a conexão por QR já tiver instância/conectado → "QR Code".
+  //   3) senão, deixa sem seleção (o usuário escolhe no seletor).
+  // Cliques manuais no seletor continuam livres — o ref só impede que este
+  // efeito sobrescreva a escolha depois de resolvido.
+  useEffect(() => {
+    if (methodResolvedRef.current) return;
+    if (loading) return;
+    if (phoneNumberId) {
+      methodResolvedRef.current = true;
+      setMethod('meta');
+      return;
+    }
+    // Sem Meta: aguarda a sondagem do QR para decidir.
+    if (!qrProbed) return;
+    methodResolvedRef.current = true;
+    setMethod(qrHasSession ? 'qr' : null);
+  }, [loading, phoneNumberId, qrProbed, qrHasSession]);
 
   async function handleSave() {
     if (!phoneNumberId.trim()) {
@@ -375,7 +415,7 @@ export function WhatsAppConfig() {
       <section className="animate-in fade-in-50 duration-200">
         <SettingsPanelHead
           title="Conexão do WhatsApp"
-          description="Conecte sua WhatsApp Business API da Meta. Credenciais, webhook e passos de configuração ficam todos aqui."
+          description="Escolha como conectar seu WhatsApp: pela API Oficial da Meta ou por QR Code."
         />
         <div className="flex items-center justify-center py-12">
           <Loader2 className="size-6 animate-spin text-primary" />
@@ -385,14 +425,52 @@ export function WhatsAppConfig() {
   }
 
   const showResetBanner = resetReason === 'token_corrupted';
+  // Só oferece o QR quando o provedor está (ou pode estar) configurado no
+  // servidor. Se a sondagem confirmar que não está, escondemos a opção.
+  const qrAvailable = qrConfigured !== false;
 
   return (
     <section className="animate-in fade-in-50 duration-200">
       <SettingsPanelHead
         title="Conexão do WhatsApp"
-        description="Conecte sua WhatsApp Business API da Meta. Credenciais, webhook e passos de configuração ficam todos aqui."
+        description="Escolha como conectar seu WhatsApp: pela API Oficial da Meta ou por QR Code."
       />
-      <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
+
+      {/* Seletor de método — o usuário escolhe primeiro e só vê o fluxo
+          correspondente. As duas opções continuam sempre acessíveis para
+          trocar de método a qualquer momento. */}
+      <div className="mb-6 grid gap-3 sm:grid-cols-2">
+        <MethodCard
+          active={method === 'meta'}
+          onClick={() => setMethod('meta')}
+          icon={<Building2 className="size-5" />}
+          title="API Oficial (Meta)"
+          description="Conecte via WhatsApp Business API com suas credenciais da Meta."
+        />
+        {qrAvailable && (
+          <MethodCard
+            active={method === 'qr'}
+            onClick={() => setMethod('qr')}
+            icon={<QrCode className="size-5" />}
+            title="QR Code"
+            description="Conecte escaneando um QR Code com seu celular. Rápido, sem credenciais."
+          />
+        )}
+      </div>
+
+      {method === null && (
+        <p className="mb-6 text-sm text-muted-foreground">
+          Selecione um método de conexão acima para começar.
+        </p>
+      )}
+
+      {/* Fluxo da API Oficial (Meta). Fica sempre montado (todo o estado do
+          formulário vive no componente pai) e é exibido apenas quando esse
+          método está selecionado. */}
+      <div
+        hidden={method !== 'meta'}
+        className="grid gap-6 lg:grid-cols-[1fr_380px]"
+      >
       {/* Main config form */}
       <div className="space-y-6">
         {/* Corrupted-token reset banner */}
@@ -756,11 +834,6 @@ export function WhatsAppConfig() {
           )}
         </div>
 
-        {/* Conectar via QR (uazapi) — alternativa à API oficial da Meta.
-            O componente cuida do próprio estado e só chama as rotas
-            /api/whatsapp/uazapi/connect; se o provedor não estiver
-            configurado no servidor, ele não renderiza nada. */}
-        <UazapiConnect />
       </div>
 
       {/* Setup Instructions Sidebar */}
@@ -858,6 +931,61 @@ export function WhatsAppConfig() {
         </Card>
       </div>
     </div>
+
+      {/* Fluxo de conexão via QR Code. Mantido sempre montado para sondar o
+          status (usado ao resolver o método padrão ao abrir) e exibido só
+          quando esse método está selecionado. As rotas /api/whatsapp/... e o
+          polling do componente permanecem inalterados. */}
+      <div hidden={method !== 'qr'} className="max-w-2xl">
+        <UazapiConnect onStatusChange={handleQrStatus} />
+      </div>
     </section>
+  );
+}
+
+// Cartão clicável do seletor de método de conexão.
+function MethodCard({
+  active,
+  onClick,
+  icon,
+  title,
+  description,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: ReactNode;
+  title: string;
+  description: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={
+        'flex items-start gap-3 rounded-lg border p-4 text-left transition-colors ' +
+        (active
+          ? 'border-primary bg-primary/5 ring-1 ring-primary'
+          : 'border-border bg-card hover:border-primary/50 hover:bg-muted/50')
+      }
+    >
+      <span
+        className={
+          'flex size-10 shrink-0 items-center justify-center rounded-md ' +
+          (active
+            ? 'bg-primary text-primary-foreground'
+            : 'bg-muted text-muted-foreground')
+        }
+      >
+        {icon}
+      </span>
+      <span className="space-y-1">
+        <span className="flex items-center gap-2 font-medium text-foreground">
+          {title}
+          {active && <CheckCircle2 className="size-4 text-primary" />}
+        </span>
+        <span className="block text-sm text-muted-foreground">{description}</span>
+      </span>
+    </button>
   );
 }

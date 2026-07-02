@@ -259,7 +259,7 @@ export async function sendMessageToConversation(
     if (!config.uazapi_instance_token) {
       throw new SendMessageError(
         'whatsapp_not_configured',
-        'Instância do uazapi não conectada. Conecte um número em Configurações.',
+        'WhatsApp por QR Code não conectado. Conecte um número em Configurações.',
         400
       );
     }

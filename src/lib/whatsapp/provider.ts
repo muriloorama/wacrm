@@ -154,7 +154,7 @@ export function getProvider(config: ProviderConfig): WhatsAppProvider {
 
   if (kind === "uazapi") {
     if (!config.uazapiToken) {
-      throw new Error("Instância do uazapi não conectada para esta conta.");
+      throw new Error("WhatsApp por QR Code não conectado para esta conta.");
     }
     return new UazapiProvider(config.uazapiToken);
   }

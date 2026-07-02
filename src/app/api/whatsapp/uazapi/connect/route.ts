@@ -39,7 +39,7 @@ function webhookUrl(request: Request): string {
 export async function POST(request: Request) {
   if (!isUazapiConfigured()) {
     return NextResponse.json(
-      { error: "Provedor uazapi não configurado no servidor." },
+      { error: "Conexão por QR Code indisponível no servidor." },
       { status: 500 },
     );
   }
@@ -105,7 +105,7 @@ export async function POST(request: Request) {
       connected: status.status?.connected ?? false,
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : "Falha ao conectar ao uazapi.";
+    const msg = err instanceof Error ? err.message : "Falha ao conectar por QR Code.";
     return NextResponse.json({ error: msg }, { status: 502 });
   }
 }
@@ -148,7 +148,7 @@ export async function GET(request: Request) {
       paircode: status.instance?.paircode ?? "",
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : "Falha ao consultar o uazapi.";
+    const msg = err instanceof Error ? err.message : "Falha ao consultar a conexão por QR Code.";
     return NextResponse.json({ error: msg }, { status: 502 });
   }
 }
