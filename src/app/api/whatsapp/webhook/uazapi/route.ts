@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { supabaseAdmin } from "@/lib/automations/admin-client";
@@ -29,9 +29,12 @@ import { dispatchInboundToFlows } from "@/lib/flows/engine";
 // ============================================================
 
 export const runtime = "nodejs";
+// Dá tempo ao trabalho agendado em after() (download de mídia, espelhamento
+// de avatar, disparo de fluxos/automações) terminar depois do 200.
+export const maxDuration = 60;
 
 // ------------------------------------------------------------
-// Tipos do payload uazapi (apenas os campos que consumimos).
+// Tipos do payload (apenas os campos que consumimos).
 // ------------------------------------------------------------
 interface UazapiMessage {
   instance?: string; // alguns payloads repetem a instância dentro de data
@@ -327,12 +330,24 @@ async function handleUazapiReaction(
     configOwnerUserId,
     phone,
     contactName,
-    avatarUrl,
     isGroupMsg,
-    data.chatid ?? "",
-    instanceToken,
   );
   if (!contact) return;
+
+  // Foto do contato: resolvida/espelhada FORA do caminho crítico (after()),
+  // só quando ainda não temos foto (evita re-espelhar a cada evento).
+  if (!contact.avatar_url) {
+    after(async () => {
+      await resolveAndMirrorAvatar(
+        db,
+        contact.id,
+        accountId,
+        avatarUrl,
+        data.chatid ?? "",
+        instanceToken,
+      );
+    });
+  }
 
   const conversation = await findOrCreateConversation(
     db,
@@ -616,64 +631,25 @@ async function processMessage(
   if (isGroupMsg && !isOutgoing && contentText && data.senderName) {
     contentText = `${data.senderName}: ${contentText}`;
   }
-  // Mídia inbound vem criptografada (.enc) e o `fileURL` do payload
-  // costuma vir vazio; resolve para uma URL servível via /message/download.
-  let mediaUrl = data.fileURL || null;
-  let mediaMime: string | null = null;
+
   const isMedia =
     contentType === "audio" ||
     contentType === "image" ||
     contentType === "video" ||
     contentType === "document";
-  if (isMedia && !mediaUrl && instanceToken) {
-    const mid = data.id || data.messageid;
-    if (mid) {
-      try {
-        const dl = await downloadMedia(instanceToken, mid);
-        if (dl.fileURL) mediaUrl = dl.fileURL;
-        if (dl.mimetype) mediaMime = dl.mimetype;
-      } catch (err) {
-        console.error("[uazapi-webhook] falha ao baixar mídia:", err);
-      }
-    }
-  }
+  // INLINE guardamos apenas a URL que já veio no payload (quando houver). O
+  // download da mídia (.enc) + espelhamento no B2 é pesado e vai para o
+  // after(): a bolha aparece rápido e a mídia chega logo depois via realtime.
+  const mediaUrl = data.fileURL || null;
 
-  // PERMANÊNCIA: a URL do uazapi é temporária. Baixamos os bytes e
-  // reenviamos ao Backblaze B2, usando a URL pública permanente como
-  // media_url. Se qualquer passo falhar, mantemos a URL do uazapi
-  // (não perdemos a mensagem).
-  if (isMedia && mediaUrl && isB2Configured()) {
-    try {
-      const res = await fetch(mediaUrl);
-      if (res.ok) {
-        const bytes = new Uint8Array(await res.arrayBuffer());
-        const contentTypeHeader =
-          res.headers.get("content-type") || undefined;
-        const mime =
-          mediaMime || contentTypeHeader || "application/octet-stream";
-        const ext = extFromMime(mime);
-        const mid = data.messageid || data.id || `${Date.now()}`;
-        const key = `chat-media/account-${accountId}/${Date.now()}-${mid}.${ext}`;
-        await uploadBuffer(key, bytes, mime);
-        mediaUrl = publicUrl(key);
-      }
-    } catch (err) {
-      console.error("[uazapi-webhook] falha ao subir mídia ao B2:", err);
-      // mantém mediaUrl do uazapi como fallback
-    }
-  }
-
-  // findOrCreate contato (account-scoped, por telefone).
+  // findOrCreate contato (rápido, SEM bloquear na foto).
   const contact = await findOrCreateContact(
     db,
     accountId,
     configOwnerUserId,
     phone,
     contactName,
-    avatarUrl,
     isGroupMsg,
-    data.chatid ?? "",
-    instanceToken,
   );
   if (!contact) return;
 
@@ -687,7 +663,7 @@ async function processMessage(
   );
   if (!conversation) return;
 
-  // Idempotência: o uazapi pode entregar o mesmo evento mais de uma vez
+  // Idempotência: o gateway pode entregar o mesmo evento mais de uma vez
   // (webhooks duplicados / reenvios). Se a mensagem já existe nesta
   // conversa, não insere de novo.
   if (data.messageid) {
@@ -707,22 +683,31 @@ async function processMessage(
     : new Date().toISOString();
 
   // Insert da mensagem — mesmos campos/valores do webhook da Meta
-  // (sender_type:'customer', status:'delivered').
-  const { error: msgError } = await db.from("messages").insert({
-    conversation_id: conversation.id,
-    sender_type: isOutgoing ? "agent" : "customer",
-    content_type: contentType,
-    content_text: contentText,
-    media_url: mediaUrl,
-    message_id: data.messageid ?? null,
-    status: isOutgoing ? "sent" : "delivered",
-    created_at: createdAt,
-  });
+  // (sender_type:'customer', status:'delivered'). Retorna o id para o
+  // passo after() poder atualizar a mídia depois.
+  const { data: inserted, error: msgError } = await db
+    .from("messages")
+    .insert({
+      conversation_id: conversation.id,
+      sender_type: isOutgoing ? "agent" : "customer",
+      content_type: contentType,
+      content_text: contentText,
+      media_url: mediaUrl,
+      message_id: data.messageid ?? null,
+      status: isOutgoing ? "sent" : "delivered",
+      created_at: createdAt,
+    })
+    .select("id")
+    .single();
 
   if (msgError) {
-    console.error("[uazapi-webhook] erro ao inserir mensagem:", msgError);
+    // Corrida perdida: outra entrega concorrente já inseriu esta mensagem
+    // (viola o índice único de message_id). Tratamos como já processada.
+    if (isUniqueViolation(msgError)) return;
+    console.error("[webhook] erro ao inserir mensagem:", msgError);
     return;
   }
+  const insertedMessageId = inserted.id as string;
 
   // Atualiza a conversa (última mensagem + unread_count).
   const { error: convError } = await db
@@ -738,64 +723,205 @@ async function processMessage(
     .eq("id", conversation.id);
 
   if (convError) {
-    console.error("[uazapi-webhook] erro ao atualizar conversa:", convError);
+    console.error("[webhook] erro ao atualizar conversa:", convError);
   }
 
   // ============================================================
-  // Dispara FLUXOS + AUTOMAÇÕES para mensagens RECEBIDAS de cliente
-  // (espelha o webhook da Meta). Mensagens de saída (fromMe) e grupos
-  // não disparam. Se um fluxo consome a mensagem, suprime os gatilhos de
-  // conteúdo (new_message_received/keyword_match).
+  // Daqui pra baixo é TRABALHO PESADO agendado para DEPOIS do 200 (after()).
+  // Cada bloco tem seu próprio try/catch — erro em background só é logado e
+  // nunca derruba nada.
   // ============================================================
-  if (!isOutgoing && !isGroupMsg) {
-    try {
-      // Primeira mensagem de cliente nesta conversa?
-      const { count } = await db
-        .from("messages")
-        .select("id", { count: "exact", head: true })
-        .eq("conversation_id", conversation.id)
-        .eq("sender_type", "customer");
-      const isFirstInbound = (count ?? 0) <= 1;
-      const inboundText = contentText ?? "";
 
-      const flowResult = await dispatchInboundToFlows({
+  // 1) Foto do contato: busca (payload/gateway) + espelhamento no B2 e só
+  //    então UPDATE em contacts.avatar_url (quando ainda estiver vazia).
+  if (!contact.avatar_url) {
+    after(async () => {
+      await resolveAndMirrorAvatar(
+        db,
+        contact.id,
         accountId,
-        userId: configOwnerUserId,
-        contactId: contact.id,
-        conversationId: conversation.id,
-        message: {
-          kind: "text",
-          text: inboundText,
-          meta_message_id: data.messageid ?? "",
-        },
-        isFirstInboundMessage: isFirstInbound,
-      });
+        avatarUrl,
+        data.chatid ?? "",
+        instanceToken,
+      );
+    });
+  }
 
-      const triggers: (
-        | "new_message_received"
-        | "keyword_match"
-        | "first_inbound_message"
-      )[] = [];
-      if (!flowResult.consumed) {
-        triggers.push("new_message_received", "keyword_match");
-      }
-      if (isFirstInbound) triggers.unshift("first_inbound_message");
-      for (const triggerType of triggers) {
-        runAutomationsForTrigger({
+  // 2) Mídia: baixa (.enc) + sobe no B2 e dá UPDATE em messages.media_url.
+  if (isMedia) {
+    after(async () => {
+      await resolveAndStoreMedia(
+        db,
+        insertedMessageId,
+        accountId,
+        data,
+        instanceToken,
+      );
+    });
+  }
+
+  // 3) Fluxos + automações para mensagens RECEBIDAS de cliente (espelha o
+  //    webhook da Meta). Saída (fromMe) e grupos não disparam. Se um fluxo
+  //    consome a mensagem, suprime os gatilhos de conteúdo
+  //    (new_message_received/keyword_match).
+  if (!isOutgoing && !isGroupMsg) {
+    const inboundText = contentText ?? "";
+    after(async () => {
+      try {
+        // Primeira mensagem de cliente nesta conversa?
+        const { count } = await db
+          .from("messages")
+          .select("id", { count: "exact", head: true })
+          .eq("conversation_id", conversation.id)
+          .eq("sender_type", "customer");
+        const isFirstInbound = (count ?? 0) <= 1;
+
+        const flowResult = await dispatchInboundToFlows({
           accountId,
-          triggerType,
+          userId: configOwnerUserId,
           contactId: contact.id,
-          context: {
-            message_text: inboundText,
-            conversation_id: conversation.id,
+          conversationId: conversation.id,
+          message: {
+            kind: "text",
+            text: inboundText,
+            meta_message_id: data.messageid ?? "",
           },
-        }).catch((err) =>
-          console.error("[uazapi-webhook] automação falhou:", err),
-        );
+          isFirstInboundMessage: isFirstInbound,
+        });
+
+        const triggers: (
+          | "new_message_received"
+          | "keyword_match"
+          | "first_inbound_message"
+        )[] = [];
+        if (!flowResult.consumed) {
+          triggers.push("new_message_received", "keyword_match");
+        }
+        if (isFirstInbound) triggers.unshift("first_inbound_message");
+        for (const triggerType of triggers) {
+          runAutomationsForTrigger({
+            accountId,
+            triggerType,
+            contactId: contact.id,
+            context: {
+              message_text: inboundText,
+              conversation_id: conversation.id,
+            },
+          }).catch((err) =>
+            console.error("[webhook] automação falhou:", err),
+          );
+        }
+      } catch (err) {
+        console.error("[webhook] dispatch fluxos/automações:", err);
       }
-    } catch (err) {
-      console.error("[uazapi-webhook] dispatch fluxos/automações:", err);
+    });
+  }
+}
+
+// ------------------------------------------------------------
+// Passos de BACKGROUND (rodam dentro de after(), após o 200).
+// Sempre resilientes: qualquer falha é só logada.
+// ------------------------------------------------------------
+
+/**
+ * Resolve a foto do contato (payload ou gateway), espelha no B2 e grava em
+ * contacts.avatar_url — apenas quando a foto ainda estiver vazia (idempotente
+ * sob corrida via `.is("avatar_url", null)`). Nunca lança.
+ */
+async function resolveAndMirrorAvatar(
+  db: SupabaseClient,
+  contactId: string,
+  accountId: string,
+  avatarUrl: string | null,
+  chatid: string,
+  instanceToken: string,
+): Promise<void> {
+  try {
+    let sourceAvatar = avatarUrl;
+    if (!sourceAvatar && instanceToken) {
+      sourceAvatar = await fetchAvatarFromGateway(chatid, instanceToken);
     }
+    if (!sourceAvatar) return;
+    const mirrored = await mirrorAvatarToB2(sourceAvatar, accountId);
+    await db
+      .from("contacts")
+      .update({ avatar_url: mirrored, updated_at: new Date().toISOString() })
+      .eq("id", contactId)
+      .is("avatar_url", null);
+  } catch (err) {
+    console.error("[webhook] falha ao espelhar avatar:", err);
+  }
+}
+
+/**
+ * Baixa a mídia (.enc via /message/download quando o payload não trouxe URL),
+ * sobe no B2 e grava a URL permanente em messages.media_url. Em qualquer
+ * falha, mantém o que houver e só loga. Nunca lança.
+ */
+async function resolveAndStoreMedia(
+  db: SupabaseClient,
+  messageId: string,
+  accountId: string,
+  data: UazapiMessage,
+  instanceToken: string,
+): Promise<void> {
+  try {
+    const initialUrl = data.fileURL || null;
+    let mediaUrl = initialUrl;
+    let mediaMime: string | null = null;
+
+    // Mídia inbound vem criptografada (.enc) e o `fileURL` do payload costuma
+    // vir vazio; resolve para uma URL servível via /message/download.
+    if (!mediaUrl && instanceToken) {
+      const mid = data.id || data.messageid;
+      if (mid) {
+        try {
+          const dl = await downloadMedia(instanceToken, mid);
+          if (dl.fileURL) mediaUrl = dl.fileURL;
+          if (dl.mimetype) mediaMime = dl.mimetype;
+        } catch (err) {
+          console.error("[webhook] falha ao baixar mídia:", err);
+        }
+      }
+    }
+
+    // PERMANÊNCIA: a URL do gateway é temporária. Baixamos os bytes e
+    // reenviamos ao Backblaze B2, usando a URL pública permanente como
+    // media_url. Se qualquer passo falhar, mantemos a URL anterior.
+    if (mediaUrl && isB2Configured()) {
+      try {
+        const res = await fetch(mediaUrl);
+        if (res.ok) {
+          const bytes = new Uint8Array(await res.arrayBuffer());
+          const contentTypeHeader =
+            res.headers.get("content-type") || undefined;
+          const mime =
+            mediaMime || contentTypeHeader || "application/octet-stream";
+          const ext = extFromMime(mime);
+          const mid = data.messageid || data.id || `${Date.now()}`;
+          const key = `chat-media/account-${accountId}/${Date.now()}-${mid}.${ext}`;
+          await uploadBuffer(key, bytes, mime);
+          mediaUrl = publicUrl(key);
+        }
+      } catch (err) {
+        console.error("[webhook] falha ao subir mídia ao B2:", err);
+        // mantém mediaUrl anterior como fallback
+      }
+    }
+
+    // Só atualiza a linha da mensagem se resolvemos uma URL diferente da que
+    // já foi inserida inline (evita reescrita/realtime desnecessário).
+    if (mediaUrl && mediaUrl !== initialUrl) {
+      const { error } = await db
+        .from("messages")
+        .update({ media_url: mediaUrl })
+        .eq("id", messageId);
+      if (error) {
+        console.error("[webhook] erro ao atualizar media_url:", error);
+      }
+    }
+  } catch (err) {
+    console.error("[webhook] falha ao resolver mídia:", err);
   }
 }
 
@@ -914,27 +1040,17 @@ async function findOrCreateContact(
   configOwnerUserId: string,
   phone: string,
   name: string,
-  avatarUrl: string | null,
   isGroup = false,
-  chatid = "",
-  instanceToken = "",
 ): Promise<ContactRow | null> {
+  // NB: a resolução/espelhamento da FOTO saiu daqui para o caminho de
+  // background (after() → resolveAndMirrorAvatar). Aqui só cria/atualiza o
+  // contato rápido, sem bloquear na rede. O contato retornado com
+  // `avatar_url` null sinaliza ao chamador que a foto ainda precisa ser
+  // resolvida.
   const existing = await findExistingContact(db, accountId, phone);
   if (existing) {
     const patch: Record<string, unknown> = {};
     if (name && name !== existing.name) patch.name = name;
-    // Só preenche a foto quando o contato AINDA não tem (evita re-espelhar
-    // a cada mensagem, já que a URL do WhatsApp muda sempre). Se o payload
-    // não trouxe foto (típico de ENTRADA), tenta buscá-la no gateway.
-    if (!existing.avatar_url) {
-      let sourceAvatar = avatarUrl;
-      if (!sourceAvatar && instanceToken) {
-        sourceAvatar = await fetchAvatarFromGateway(chatid, instanceToken);
-      }
-      if (sourceAvatar) {
-        patch.avatar_url = await mirrorAvatarToB2(sourceAvatar, accountId);
-      }
-    }
     // Marca como grupo se ainda não estiver marcado.
     if (isGroup && !existing.is_group) patch.is_group = true;
     if (Object.keys(patch).length > 0) {
@@ -944,15 +1060,6 @@ async function findOrCreateContact(
     return existing;
   }
 
-  // Contato novo: usa a foto do payload; se não veio, busca no gateway
-  // antes de desistir (para a foto já aparecer na 1ª mensagem de entrada).
-  let sourceAvatar = avatarUrl;
-  if (!sourceAvatar && instanceToken) {
-    sourceAvatar = await fetchAvatarFromGateway(chatid, instanceToken);
-  }
-  const finalAvatar = sourceAvatar
-    ? await mirrorAvatarToB2(sourceAvatar, accountId)
-    : null;
   const { data: newContact, error: createError } = await db
     .from("contacts")
     .insert({
@@ -960,7 +1067,7 @@ async function findOrCreateContact(
       user_id: configOwnerUserId,
       phone,
       name: name || phone,
-      avatar_url: finalAvatar,
+      avatar_url: null,
       is_group: isGroup,
     })
     .select()
@@ -973,7 +1080,7 @@ async function findOrCreateContact(
       const raced = await findExistingContact(db, accountId, phone);
       if (raced) return raced;
     }
-    console.error("[uazapi-webhook] erro ao criar contato:", createError);
+    console.error("[webhook] erro ao criar contato:", createError);
     return null;
   }
 
