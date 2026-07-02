@@ -3,21 +3,27 @@
 import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
-import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 import type { Contact, Deal, ContactNote, Tag } from "@/types";
 import {
   Phone,
   Mail,
   Copy,
   Check,
-  User,
   Tag as TagIcon,
   DollarSign,
   StickyNote,
   Plus,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
@@ -31,6 +37,8 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
   const [deals, setDeals] = useState<Deal[]>([]);
   const [notes, setNotes] = useState<ContactNote[]>([]);
   const [tags, setTags] = useState<(Tag & { contact_tag_id: string })[]>([]);
+  const [allTags, setAllTags] = useState<Tag[]>([]);
+  const [savingTag, setSavingTag] = useState(false);
   const [newNote, setNewNote] = useState("");
   const [addingNote, setAddingNote] = useState(false);
 
@@ -39,8 +47,8 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
 
     const supabase = createClient();
 
-    // Fetch deals, notes, and tags in parallel
-    const [dealsRes, notesRes, tagsRes] = await Promise.all([
+    // Fetch deals, notes, contact tags, and all account tags in parallel
+    const [dealsRes, notesRes, tagsRes, allTagsRes] = await Promise.all([
       supabase
         .from("deals")
         .select("*, stage:pipeline_stages(*)")
@@ -55,10 +63,12 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
         .from("contact_tags")
         .select("id, tag_id, tags(*)")
         .eq("contact_id", contact.id),
+      supabase.from("tags").select("*").order("name"),
     ]);
 
     if (dealsRes.data) setDeals(dealsRes.data);
     if (notesRes.data) setNotes(notesRes.data);
+    if (allTagsRes.data) setAllTags(allTagsRes.data);
     if (tagsRes.data) {
       const mapped = tagsRes.data
         .filter((ct: Record<string, unknown>) => ct.tags)
@@ -69,6 +79,52 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
       setTags(mapped);
     }
   }, [contact]);
+
+  const handleAddTag = useCallback(
+    async (tag: Tag) => {
+      if (!contact) return;
+      setSavingTag(true);
+
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("contact_tags")
+        .insert({ contact_id: contact.id, tag_id: tag.id })
+        .select("id")
+        .single();
+
+      if (error || !data) {
+        toast.error("Falha ao adicionar etiqueta");
+      } else {
+        setTags((prev) => [...prev, { ...tag, contact_tag_id: data.id }]);
+        toast.success("Etiqueta adicionada");
+      }
+      setSavingTag(false);
+    },
+    [contact],
+  );
+
+  const handleRemoveTag = useCallback(
+    async (contactTagId: string) => {
+      setSavingTag(true);
+
+      const supabase = createClient();
+      const { error } = await supabase
+        .from("contact_tags")
+        .delete()
+        .eq("id", contactTagId);
+
+      if (error) {
+        toast.error("Falha ao remover etiqueta");
+      } else {
+        setTags((prev) =>
+          prev.filter((t) => t.contact_tag_id !== contactTagId),
+        );
+        toast.success("Etiqueta removida");
+      }
+      setSavingTag(false);
+    },
+    [],
+  );
 
   // Load on contact change. setContactData/setTags run inside async
   // Supabase callbacks, not synchronously in the effect body.
@@ -184,24 +240,69 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
               <TagIcon className="h-3 w-3" />
               Etiquetas
             </div>
-            <div className="mt-2 flex flex-wrap gap-1">
+            <div className="mt-2 flex flex-wrap items-center gap-1">
               {tags.length === 0 ? (
                 <p className="px-1 text-xs text-muted-foreground">Nenhuma etiqueta</p>
               ) : (
                 tags.map((tag) => (
                   <span
                     key={tag.contact_tag_id}
-                    className="rounded-full px-2 py-0.5 text-[10px] font-medium"
+                    className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
                     style={{
                       backgroundColor: `${tag.color}20`,
                       color: tag.color,
                     }}
                   >
                     {tag.name}
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveTag(tag.contact_tag_id)}
+                      disabled={savingTag}
+                      aria-label={`Remover etiqueta ${tag.name}`}
+                      className="rounded-full transition-opacity hover:opacity-70 disabled:opacity-50"
+                    >
+                      <X className="h-2.5 w-2.5" />
+                    </button>
                   </span>
                 ))
               )}
             </div>
+
+            {(() => {
+              const availableTags = allTags.filter(
+                (t) => !tags.some((ct) => ct.id === t.id),
+              );
+              return (
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <button
+                        type="button"
+                        disabled={savingTag || availableTags.length === 0}
+                        className="mt-2 inline-flex items-center gap-1 rounded-lg px-1 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+                      >
+                        <Plus className="h-3 w-3" />
+                        Adicionar etiqueta
+                      </button>
+                    }
+                  />
+                  <DropdownMenuContent align="start" className="max-h-60">
+                    {availableTags.map((tag) => (
+                      <DropdownMenuItem
+                        key={tag.id}
+                        onClick={() => handleAddTag(tag)}
+                      >
+                        <span
+                          className="h-2.5 w-2.5 rounded-full"
+                          style={{ backgroundColor: tag.color }}
+                        />
+                        {tag.name}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              );
+            })()}
           </div>
 
           {/* Divider */}

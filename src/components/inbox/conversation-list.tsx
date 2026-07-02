@@ -9,9 +9,19 @@ import {
 } from "@/lib/inbox/conversations";
 import { cn } from "@/lib/utils";
 import type { Conversation, ConversationStatus, Tag } from "@/types";
-import { Search, ChevronDown, X } from "lucide-react";
+import {
+  Search,
+  ChevronDown,
+  X,
+  Image as ImageIcon,
+  Mic,
+  Video,
+  FileText,
+  Check,
+} from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
@@ -55,6 +65,21 @@ const STATUS_COLORS: Record<ConversationStatus, string> = {
   closed: "bg-muted-foreground",
 };
 
+/**
+ * Prévia de mídia: quando `last_message_text` é um dos marcadores crus
+ * ("[imagem]", "[áudio]", "[vídeo]", "[documento]") mostramos um ícone +
+ * rótulo curto em vez do texto literal. Retorna `null` para texto comum.
+ */
+const MEDIA_PREVIEWS: Record<
+  string,
+  { icon: typeof ImageIcon; label: string }
+> = {
+  "[imagem]": { icon: ImageIcon, label: "Foto" },
+  "[áudio]": { icon: Mic, label: "Áudio" },
+  "[vídeo]": { icon: Video, label: "Vídeo" },
+  "[documento]": { icon: FileText, label: "Documento" },
+};
+
 type InboxFilter = ConversationStatus | "all" | "unread";
 
 const FILTER_OPTIONS: { label: string; value: InboxFilter }[] = [
@@ -84,6 +109,13 @@ export function ConversationList({
   // Seletor de caixa de entrada por canal de WhatsApp. `null` = todos os canais.
   const [channels, setChannels] = useState<ChannelOption[]>([]);
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
+  // Overrides otimistas das etiquetas do contato, alteradas pelo menu de
+  // contexto (botão direito) na lista. Chave = contact_id → ids de etiquetas.
+  // Sobrepõem `conversation.contact.tags` para refletir a mudança na hora,
+  // sem depender de um refetch/realtime do pai.
+  const [contactTagOverrides, setContactTagOverrides] = useState<
+    Record<string, string[]>
+  >({});
 
   // Keep the latest callback in a ref so the fetch effect below can
   // have a stable, empty-dep identity. Previously the fetch useCallback
@@ -263,6 +295,55 @@ export function ConversationList({
       prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id]
     );
   }, []);
+
+  /**
+   * Ids de etiquetas atuais de um contato: usa o override otimista se houver,
+   * senão deriva de `contact.tags` embutido na conversa.
+   */
+  const getContactTagIds = useCallback(
+    (conv: Conversation): string[] => {
+      const contactId = conv.contact?.id;
+      if (contactId && contactTagOverrides[contactId]) {
+        return contactTagOverrides[contactId];
+      }
+      return (conv.contact?.tags ?? []).map((t) => t.id);
+    },
+    [contactTagOverrides]
+  );
+
+  /**
+   * Adiciona/remove uma etiqueta do contato (menu de contexto na lista).
+   * Espelha o padrão de `contact-detail-view.tsx`: insert/delete na tabela de
+   * junção `contact_tags`. Atualiza o override otimista para refletir na UI.
+   */
+  const toggleContactTag = useCallback(
+    async (contactId: string, tagId: string, currentIds: string[]) => {
+      const supabase = createClient();
+      const isSelected = currentIds.includes(tagId);
+      const next = isSelected
+        ? currentIds.filter((id) => id !== tagId)
+        : [...currentIds, tagId];
+
+      // Otimista: reflete já, reverte no erro.
+      setContactTagOverrides((prev) => ({ ...prev, [contactId]: next }));
+
+      const { error } = isSelected
+        ? await supabase
+            .from("contact_tags")
+            .delete()
+            .eq("contact_id", contactId)
+            .eq("tag_id", tagId)
+        : await supabase
+            .from("contact_tags")
+            .insert({ contact_id: contactId, tag_id: tagId });
+
+      if (error) {
+        setContactTagOverrides((prev) => ({ ...prev, [contactId]: currentIds }));
+        toast.error("Falha ao atualizar etiqueta");
+      }
+    },
+    []
+  );
 
   const clearContactFilters = useCallback(() => {
     setSelectedTagIds([]);
@@ -509,6 +590,9 @@ export function ConversationList({
                     ? channelNameById.get(conv.channel_id) ?? null
                     : null
                 }
+                tags={tags}
+                contactTagIds={getContactTagIds(conv)}
+                onToggleContactTag={toggleContactTag}
               />
             ))}
           </div>
@@ -524,6 +608,16 @@ interface ConversationItemProps {
   onSelect: (conversation: Conversation) => void;
   /** Nome do canal (caixa de entrada) da conversa; null oculta o badge. */
   channelName: string | null;
+  /** Etiquetas da conta, para o menu de contexto (botão direito). */
+  tags: Tag[];
+  /** Ids das etiquetas que o contato desta conversa já possui. */
+  contactTagIds: string[];
+  /** Adiciona/remove uma etiqueta do contato. */
+  onToggleContactTag: (
+    contactId: string,
+    tagId: string,
+    currentIds: string[]
+  ) => void;
 }
 
 function ConversationItem({
@@ -531,10 +625,27 @@ function ConversationItem({
   isActive,
   onSelect,
   channelName,
+  tags,
+  contactTagIds,
+  onToggleContactTag,
 }: ConversationItemProps) {
   const contact = conversation.contact;
   const displayName = contact?.name || contact?.phone || "Desconhecido";
   const initials = displayName.charAt(0).toUpperCase();
+
+  // Menu de contexto (botão direito) → etiquetas. Um DropdownMenu controlado,
+  // ancorado num ponto invisível posicionado no local do clique.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPos, setMenuPos] = useState<{ x: number; y: number }>({
+    x: 0,
+    y: 0,
+  });
+
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setMenuPos({ x: e.clientX, y: e.clientY });
+    setMenuOpen(true);
+  }, []);
 
   const handleClick = useCallback(() => {
     onSelect(conversation);
@@ -547,9 +658,18 @@ function ConversationItem({
       })
     : "";
 
+  // Prévia de mídia: marcador cru → ícone + rótulo. undefined = texto comum.
+  const mediaPreview = conversation.last_message_text
+    ? MEDIA_PREVIEWS[conversation.last_message_text]
+    : undefined;
+
+  const contactId = contact?.id ?? null;
+
   return (
+    <>
     <button
       onClick={handleClick}
+      onContextMenu={handleContextMenu}
       className={cn(
         "flex w-full items-start gap-3 px-3 py-3 text-left transition-colors hover:bg-muted/50",
         isActive && "border-l-2 border-primary bg-muted/70"
@@ -585,8 +705,15 @@ function ConversationItem({
           </Badge>
         )}
         <div className="mt-0.5 flex items-center justify-between gap-2">
-          <p className="truncate text-xs text-muted-foreground">
-            {conversation.last_message_text || "Nenhuma mensagem ainda"}
+          <p className="flex min-w-0 items-center gap-1 truncate text-xs text-muted-foreground">
+            {mediaPreview ? (
+              <>
+                <mediaPreview.icon className="size-3 shrink-0" />
+                <span className="truncate">{mediaPreview.label}</span>
+              </>
+            ) : (
+              conversation.last_message_text || "Nenhuma mensagem ainda"
+            )}
           </p>
           <div className="flex shrink-0 items-center gap-1.5">
             {conversation.unread_count > 0 && (
@@ -605,5 +732,54 @@ function ConversationItem({
         </div>
       </div>
     </button>
+
+    {/* Menu de contexto (botão direito) → etiquetas do contato.
+        DropdownMenu controlado, ancorado num ponto invisível (fixed) no
+        local do clique. Só faz sentido com um contato e etiquetas. */}
+    {contactId && tags.length > 0 && (
+      <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+        <DropdownMenuTrigger
+          render={
+            <span
+              aria-hidden
+              className="pointer-events-none fixed"
+              style={{ left: menuPos.x, top: menuPos.y }}
+            />
+          }
+        />
+        <DropdownMenuContent
+          align="start"
+          className="max-h-64 w-56 overflow-y-auto border-border bg-popover"
+        >
+          <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
+            Etiquetas
+          </div>
+          {tags.map((t) => {
+            const checked = contactTagIds.includes(t.id);
+            return (
+              <DropdownMenuItem
+                key={t.id}
+                onSelect={(e) => {
+                  // Mantém o menu aberto para alternar várias etiquetas.
+                  e.preventDefault();
+                  onToggleContactTag(contactId, t.id, contactTagIds);
+                }}
+                className="text-sm text-popover-foreground"
+              >
+                <span className="flex flex-1 items-center gap-2">
+                  <span
+                    className="h-2 w-2 shrink-0 rounded-full"
+                    style={{ backgroundColor: t.color }}
+                  />
+                  <span className="truncate">{t.name}</span>
+                </span>
+                {checked && <Check className="size-3.5 shrink-0 text-primary" />}
+              </DropdownMenuItem>
+            );
+          })}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    )}
+    </>
   );
 }
