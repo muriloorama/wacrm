@@ -139,10 +139,22 @@ export async function GET(request: Request) {
 
   try {
     const status = await getInstanceStatus(decrypt(cfg.uazapi_instance_token as string));
+    const connected = status.status?.connected ?? false;
+
+    // Mantém o status da config em sincronia com o uazapi — é o que o
+    // inbox usa para decidir se o WhatsApp está conectado.
+    void supabase
+      .from("whatsapp_config")
+      .update({
+        status: connected ? "connected" : "disconnected",
+        ...(connected ? { connected_at: new Date().toISOString() } : {}),
+      })
+      .eq("account_id", accountId);
+
     return NextResponse.json({
       configured: true,
       hasInstance: true,
-      connected: status.status?.connected ?? false,
+      connected,
       instanceStatus: status.instance?.status ?? "unknown",
       qrcode: status.instance?.qrcode ?? "",
       paircode: status.instance?.paircode ?? "",

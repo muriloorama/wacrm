@@ -83,6 +83,17 @@ async function processWebhook(body: UazapiWebhookBody) {
   const instanceId = body.instance ?? body.data?.instance;
   const data = body.data;
 
+  // Log de diagnóstico (aparece nos logs da Vercel) para conferir o
+  // formato REAL do payload entregue pelo uazapi.
+  console.log(
+    "[uazapi-webhook] recebido — event:",
+    event,
+    "| instance:",
+    instanceId,
+    "| data keys:",
+    data ? Object.keys(data).join(",") : "(sem data)",
+  );
+
   if (!instanceId || !data) return;
 
   // 1) Resolver a conta pela instância.
@@ -106,14 +117,23 @@ async function processWebhook(body: UazapiWebhookBody) {
     return;
   }
 
-  // 2) Eventos de STATUS (messages_update / event "status").
-  if (event === "messages_update" || event === "status") {
+  const ev = (event ?? "").toLowerCase();
+
+  // 2) Eventos de STATUS (messages_update / message_update / status).
+  if (ev.includes("update") || ev === "status") {
     await handleStatusUpdate(db, data);
     return;
   }
 
-  // 3) Eventos de MENSAGEM recebida.
-  if (event === "messages") {
+  // 3) Eventos de MENSAGEM recebida. Tolerante ao nome do evento
+  // ("messages"/"message"/variações) e, como fallback, detecta pela
+  // presença de conteúdo de mensagem no payload.
+  const looksLikeMessage =
+    ev.startsWith("message") ||
+    data.text !== undefined ||
+    data.content !== undefined ||
+    Boolean(data.fileURL);
+  if (looksLikeMessage) {
     await processMessage(db, config.account_id, config.user_id, data);
     return;
   }
