@@ -1,37 +1,53 @@
 import React from "react";
 
-// Detecta URLs (http/https e www.) dentro do texto.
-const URL_RE = /(https?:\/\/[^\s<]+|www\.[^\s<]+)/gi;
-// Pontuação final que não faz parte do link (ex.: "veja http://x.com." — o
-// ponto é da frase, não da URL).
+// Pontuação final que não faz parte de um link.
 const TRAILING_RE = /[.,;:!?)\]}'"»]+$/;
 
-/**
- * Renderiza o texto transformando URLs em links clicáveis (abrem em nova aba).
- * O resto do texto é mantido igual (o <p> pai preserva quebras de linha).
- */
-export function LinkifiedText({ text }: { text: string }) {
-  if (!text) return null;
+// Marcadores reconhecidos, na ordem em que são testados. O primeiro que
+// aparecer (menor índice) no texto vence. Formatação segue o padrão do
+// WhatsApp: *negrito*  _itálico_  ~riscado~  ```mono```  `mono`.
+const PATTERNS: {
+  name: "url" | "mono" | "bold" | "italic" | "strike";
+  re: RegExp;
+}[] = [
+  { name: "url", re: /(https?:\/\/[^\s<]+|www\.[^\s<]+)/i },
+  { name: "mono", re: /```([\s\S]+?)```/ },
+  { name: "mono", re: /`([^`\n]+?)`/ },
+  { name: "bold", re: /\*([^*\n]+?)\*/ },
+  { name: "italic", re: /_([^_\n]+?)_/ },
+  { name: "strike", re: /~([^~\n]+?)~/ },
+];
 
-  const parts: React.ReactNode[] = [];
-  let lastIndex = 0;
-  let key = 0;
-  let match: RegExpExecArray | null;
-  URL_RE.lastIndex = 0;
+function formatInline(
+  text: string,
+  counter: { n: number },
+): React.ReactNode[] {
+  // Acha o marcador de menor índice no texto.
+  let best: { name: string; match: RegExpExecArray; index: number } | null =
+    null;
+  for (const p of PATTERNS) {
+    const m = p.re.exec(text);
+    if (m && (best === null || m.index < best.index)) {
+      best = { name: p.name, match: m, index: m.index };
+    }
+  }
 
-  while ((match = URL_RE.exec(text)) !== null) {
-    const raw = match[0];
-    const start = match.index;
+  if (!best) return text ? [text] : [];
 
-    // Separa a pontuação final que não pertence à URL.
-    const trailing = raw.match(TRAILING_RE)?.[0] ?? "";
-    const url = trailing ? raw.slice(0, raw.length - trailing.length) : raw;
+  const nodes: React.ReactNode[] = [];
+  const { name, match, index } = best;
+  const full = match[0];
+  const key = `t${counter.n++}`;
+
+  if (index > 0) nodes.push(text.slice(0, index));
+
+  if (name === "url") {
+    const trailing = full.match(TRAILING_RE)?.[0] ?? "";
+    const url = trailing ? full.slice(0, full.length - trailing.length) : full;
     const href = url.startsWith("www.") ? `https://${url}` : url;
-
-    if (start > lastIndex) parts.push(text.slice(lastIndex, start));
-    parts.push(
+    nodes.push(
       <a
-        key={key++}
+        key={key}
         href={href}
         target="_blank"
         rel="noopener noreferrer"
@@ -40,12 +56,43 @@ export function LinkifiedText({ text }: { text: string }) {
         {url}
       </a>,
     );
-    if (trailing) parts.push(trailing);
-
-    lastIndex = start + raw.length;
+    if (trailing) nodes.push(trailing);
+  } else if (name === "mono") {
+    nodes.push(
+      <code
+        key={key}
+        className="rounded bg-black/10 px-1 font-mono text-[0.85em] dark:bg-white/15"
+      >
+        {match[1]}
+      </code>,
+    );
+  } else {
+    // Negrito/itálico/riscado — o conteúdo interno também é formatado (aninha).
+    const inner = formatInline(match[1], counter);
+    if (name === "bold") {
+      nodes.push(
+        <strong key={key} className="font-semibold">
+          {inner}
+        </strong>,
+      );
+    } else if (name === "italic") {
+      nodes.push(<em key={key}>{inner}</em>);
+    } else {
+      nodes.push(<s key={key}>{inner}</s>);
+    }
   }
 
-  if (lastIndex < text.length) parts.push(text.slice(lastIndex));
+  // Continua no restante do texto (mesmo contador → chaves únicas).
+  nodes.push(...formatInline(text.slice(index + full.length), counter));
+  return nodes;
+}
 
-  return <>{parts}</>;
+/**
+ * Renderiza texto de mensagem com links clicáveis e formatação estilo WhatsApp
+ * (*negrito*, _itálico_, ~riscado~, ```mono```). O <p> pai preserva as quebras
+ * de linha.
+ */
+export function FormattedText({ text }: { text: string }) {
+  if (!text) return null;
+  return <>{formatInline(text, { n: 0 })}</>;
 }

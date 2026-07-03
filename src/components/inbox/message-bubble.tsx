@@ -18,7 +18,7 @@ import {
 import { format } from "date-fns";
 import { ReplyQuote } from "./reply-quote";
 import { MessageReactions } from "./message-reactions";
-import { LinkifiedText } from "./linkified-text";
+import { FormattedText } from "./linkified-text";
 
 interface MessageBubbleProps {
   message: Message;
@@ -160,7 +160,7 @@ function MessageContent({ message }: { message: Message }) {
     case "text":
       return (
         <p className="whitespace-pre-wrap break-words text-sm">
-          <LinkifiedText text={message.content_text ?? ""} />
+          <FormattedText text={message.content_text ?? ""} />
         </p>
       );
 
@@ -174,7 +174,7 @@ function MessageContent({ message }: { message: Message }) {
           )}
           {message.content_text && (
             <p className="mt-1 whitespace-pre-wrap break-words text-sm">
-              <LinkifiedText text={message.content_text} />
+              <FormattedText text={message.content_text} />
             </p>
           )}
         </div>
@@ -194,7 +194,7 @@ function MessageContent({ message }: { message: Message }) {
           )}
           {message.content_text && (
             <p className="mt-1 whitespace-pre-wrap break-words text-sm">
-              <LinkifiedText text={message.content_text} />
+              <FormattedText text={message.content_text} />
             </p>
           )}
         </div>
@@ -238,7 +238,7 @@ function MessageContent({ message }: { message: Message }) {
           </span>
           {message.content_text && (
             <p className="mt-1 whitespace-pre-wrap break-words text-sm">
-              <LinkifiedText text={message.content_text} />
+              <FormattedText text={message.content_text} />
             </p>
           )}
         </div>
