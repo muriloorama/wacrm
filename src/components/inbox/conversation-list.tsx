@@ -57,6 +57,8 @@ const ALL_CHANNELS = "all";
 type PipelineOption = { id: string; name: string };
 /** Valor do seletor quando nenhum funil específico está selecionado. */
 const ALL_PIPELINES = "all";
+/** Valor do seletor quando nenhuma origem específica está selecionada. */
+const ALL_ORIGENS = "all";
 
 interface ConversationListProps {
   activeConversationId: string | null;
@@ -133,7 +135,9 @@ export function ConversationList({
   // Filtro por funil (pipeline). `null` = todos os funis. Quando um funil
   // está selecionado, `pipelineContactIds` guarda os contact_ids que têm
   // negócio (deal) nesse funil; só essas conversas passam no filtro.
-  const { accountId } = useAuth();
+  const { accountId, account } = useAuth();
+  // Filtro por origem do lead. null = todas as origens.
+  const [selectedOrigem, setSelectedOrigem] = useState<string | null>(null);
   const [pipelines, setPipelines] = useState<PipelineOption[]>([]);
   const [selectedPipelineId, setSelectedPipelineId] = useState<string | null>(
     null,
@@ -368,6 +372,11 @@ export function ConversationList({
       );
     }
 
+    // Filtro por origem do lead.
+    if (selectedOrigem) {
+      result = result.filter((c) => c.contact?.origem === selectedOrigem);
+    }
+
     // Contact-based filters (tags via OR logic, exact company match).
     if (selectedTagIds.length > 0 || selectedCompany !== null) {
       result = result.filter((c) =>
@@ -405,6 +414,7 @@ export function ConversationList({
     selectedTagIds,
     selectedCompany,
     selectedChannelId,
+    selectedOrigem,
     pipelineContactIds,
     archivedOverrides,
     pinnedOverrides,
@@ -610,6 +620,38 @@ export function ConversationList({
               {pipelines.map((p) => (
                 <SelectItem key={p.id} value={p.id}>
                   {p.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+
+        {/* Filtro por origem do lead. Só aparece com origens configuradas. */}
+        {account && account.origens.length > 0 && (
+          <Select
+            value={selectedOrigem ?? ALL_ORIGENS}
+            onValueChange={(v) =>
+              setSelectedOrigem(v === ALL_ORIGENS ? null : v)
+            }
+            items={{
+              [ALL_ORIGENS]: "Todas as origens",
+              ...Object.fromEntries(account.origens.map((o) => [o.id, o.label])),
+            }}
+          >
+            <SelectTrigger className="h-8 w-full border-border bg-muted text-sm text-foreground">
+              <SelectValue placeholder="Todas as origens" />
+            </SelectTrigger>
+            <SelectContent className="border-border bg-popover">
+              <SelectItem value={ALL_ORIGENS}>Todas as origens</SelectItem>
+              {account.origens.map((o) => (
+                <SelectItem key={o.id} value={o.id}>
+                  <span className="flex items-center gap-2">
+                    <span
+                      className="size-2 shrink-0 rounded-full"
+                      style={{ background: o.color }}
+                    />
+                    {o.label}
+                  </span>
                 </SelectItem>
               ))}
             </SelectContent>

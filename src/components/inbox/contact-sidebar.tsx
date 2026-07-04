@@ -15,9 +15,11 @@ import {
   StickyNote,
   Plus,
   X,
+  MapPin,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { OrigemSelect } from "./origem-select";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -231,6 +233,15 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
 
           {/* Divider */}
           <div className="my-4 border-t border-border" />
+
+          {/* Origem — de onde veio o lead */}
+          <div className="mb-4">
+            <div className="mb-2 flex items-center gap-2 px-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              <MapPin className="h-3 w-3" />
+              Origem
+            </div>
+            <OrigemSelect contactId={contact.id} value={contact.origem} />
+          </div>
 
           {/* Tags */}
           <div>

@@ -98,11 +98,20 @@ export interface Contact {
   email?: string;
   company?: string;
   avatar_url?: string;
+  /** Origem do lead (id que casa com accounts.origens). null = sem origem. */
+  origem?: string | null;
   created_at: string;
   updated_at: string;
   /** Hydrated by queries that embed `contact_tags(tags(*))` (e.g. the
    *  Inbox conversation list, for tag filtering). Absent otherwise. */
   tags?: Tag[];
+}
+
+/** Origem configurável por conta (accounts.origens). */
+export interface AccountOrigin {
+  id: string;
+  label: string;
+  color: string;
 }
 
 export interface Tag {

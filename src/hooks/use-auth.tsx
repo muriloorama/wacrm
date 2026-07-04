@@ -27,6 +27,19 @@ import {
   isAccountRole,
   type AccountRole,
 } from "@/lib/auth/roles";
+import type { AccountOrigin } from "@/types";
+
+/** Narrows an unknown JSONB value into a well-formed AccountOrigin[]. */
+function toOrigens(value: unknown): AccountOrigin[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (o): o is AccountOrigin =>
+      !!o &&
+      typeof o === "object" &&
+      typeof (o as AccountOrigin).id === "string" &&
+      typeof (o as AccountOrigin).label === "string",
+  );
+}
 
 interface Profile {
   id: string;
@@ -59,6 +72,8 @@ interface AccountSummary {
   /** Cores de marca por conta (#rrggbb) ou null (usa o padrão do tema). */
   accent_color: string | null;
   bubble_color: string | null;
+  /** Origens configuráveis (de onde veio o lead): [{id,label,color}]. */
+  origens: AccountOrigin[];
 }
 
 interface AuthContextValue {
@@ -194,9 +209,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (data.account_id) {
           const { data: account, error: accountErr } = await supabase
             .from("accounts")
-            // default_currency added in migration 021; logos 038; cores 039.
+            // default_currency 021; logos 038; cores 039; origens 040.
             .select(
-              "id, name, default_currency, logo_light_url, logo_dark_url, accent_color, bubble_color",
+              "id, name, default_currency, logo_light_url, logo_dark_url, accent_color, bubble_color, origens",
             )
             .eq("id", data.account_id)
             .maybeSingle();
@@ -216,6 +231,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               logo_dark_url: (account.logo_dark_url as string) ?? null,
               accent_color: (account.accent_color as string) ?? null,
               bubble_color: (account.bubble_color as string) ?? null,
+              origens: toOrigens(account.origens),
             };
           }
         }
@@ -236,7 +252,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const { data: memberRows, error: membersErr } = await supabase
           .from("account_members")
           .select(
-            "account:accounts(id, name, default_currency, logo_light_url, logo_dark_url, accent_color, bubble_color)",
+            "account:accounts(id, name, default_currency, logo_light_url, logo_dark_url, accent_color, bubble_color, origens)",
           )
           .eq("user_id", userId);
         if (membersErr) {
@@ -256,6 +272,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                     logo_dark_url: (a.logo_dark_url as string | null) ?? null,
                     accent_color: (a.accent_color as string | null) ?? null,
                     bubble_color: (a.bubble_color as string | null) ?? null,
+                    origens: toOrigens(a.origens),
                   }
                 : null;
             })
