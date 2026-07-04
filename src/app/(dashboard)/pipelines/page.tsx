@@ -99,7 +99,11 @@ export default function PipelinesPage() {
     async (pipelineId: string) => {
       const { data } = await supabase
         .from("deals")
-        .select("*, contact:contacts(*), assignee:profiles!deals_assigned_to_fkey(*)")
+        // `tags(*)` embeda as etiquetas do contato pela junção contact_tags
+        // (many-to-many) — usado para mostrar os chips coloridos no card.
+        .select(
+          "*, contact:contacts(*, tags(*)), assignee:profiles!deals_assigned_to_fkey(*)",
+        )
         .eq("pipeline_id", pipelineId)
         .order("created_at", { ascending: false });
       return (data ?? []) as Deal[];

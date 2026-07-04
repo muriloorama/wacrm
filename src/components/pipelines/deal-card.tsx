@@ -71,6 +71,8 @@ export function DealCard({ deal, stage, onEdit, isOverlay }: DealCardProps) {
     ? account?.origens.find((o) => o.id === deal.contact?.origem) ?? null
     : null;
   const relative = tempoRelativo(deal.updated_at);
+  // Etiquetas do contato (embedadas via contact_tags na query do board).
+  const tags = deal.contact?.tags ?? [];
 
   return (
     <button
@@ -130,6 +132,25 @@ export function DealCard({ deal, stage, onEdit, isOverlay }: DealCardProps) {
           )}
         </div>
       </div>
+
+      {/* Etiquetas do contato (chips coloridos) */}
+      {tags.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1">
+          {tags.map((t) => (
+            <span
+              key={t.id}
+              className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
+              style={{ backgroundColor: `${t.color}22`, color: t.color }}
+            >
+              <span
+                className="size-1.5 rounded-full"
+                style={{ backgroundColor: t.color }}
+              />
+              {t.name}
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* Título do negócio (quando diferente do nome do contato) */}
       {showTitle && (
