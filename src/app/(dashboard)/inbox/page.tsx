@@ -187,13 +187,29 @@ export default function InboxPage() {
         return;
       }
 
+      // Conectado se: a config da Meta está "connected" OU existe pelo
+      // menos um canal uazapi (whatsapp_channels) conectado. Contas por QR
+      // Code não têm whatsapp_config — antes o banner "não conectado"
+      // aparecia à toa nelas.
       const { data } = await supabase
         .from("whatsapp_config")
         .select("status")
         .eq("account_id", accountId)
         .maybeSingle();
 
-      setWhatsappConnected(data?.status === "connected");
+      if (data?.status === "connected") {
+        setWhatsappConnected(true);
+        return;
+      }
+
+      const { data: channels } = await supabase
+        .from("whatsapp_channels")
+        .select("id")
+        .eq("account_id", accountId)
+        .eq("status", "connected")
+        .limit(1);
+
+      setWhatsappConnected((channels?.length ?? 0) > 0);
     };
 
     checkConnection();
