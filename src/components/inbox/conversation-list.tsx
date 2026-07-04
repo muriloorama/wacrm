@@ -568,6 +568,12 @@ export function ConversationList({
             onValueChange={(v) =>
               setSelectedChannelId(v === ALL_CHANNELS ? null : v)
             }
+            // Base UI precisa do mapa value→rótulo para o trigger exibir o
+            // NOME (senão mostra o id cru do canal).
+            items={{
+              [ALL_CHANNELS]: "Todos os canais",
+              ...Object.fromEntries(channels.map((c) => [c.id, c.name])),
+            }}
           >
             <SelectTrigger className="h-8 w-full border-border bg-muted text-sm text-foreground">
               <SelectValue placeholder="Todos os canais" />
@@ -591,6 +597,10 @@ export function ConversationList({
             onValueChange={(v) =>
               setSelectedPipelineId(v === ALL_PIPELINES ? null : v)
             }
+            items={{
+              [ALL_PIPELINES]: "Todos os funis",
+              ...Object.fromEntries(pipelines.map((p) => [p.id, p.name])),
+            }}
           >
             <SelectTrigger className="h-8 w-full border-border bg-muted text-sm text-foreground">
               <SelectValue placeholder="Todos os funis" />
