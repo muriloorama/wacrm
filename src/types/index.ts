@@ -100,6 +100,8 @@ export interface Contact {
   email?: string;
   company?: string;
   avatar_url?: string;
+  /** Contato é um grupo de WhatsApp (phone = id do grupo). */
+  is_group?: boolean;
   /** Origem do lead (id que casa com accounts.origens). null = sem origem. */
   origem?: string | null;
   created_at: string;
