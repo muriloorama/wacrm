@@ -225,9 +225,10 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
             close button is hidden since the sidebar is always-visible. */}
         <div
           className={cn(
-            "flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border px-4",
-            // Recolhido no desktop: centraliza o botão de expandir.
-            collapsed && "lg:justify-center lg:px-2",
+            // Logo SEMPRE centralizada; os botões flutuam à direita (posição
+            // absoluta) para não empurrarem a logo para o canto.
+            "relative flex h-14 shrink-0 items-center border-b border-border px-4",
+            collapsed ? "lg:justify-center lg:px-2" : "justify-center",
           )}
         >
           {/* Banner da marca — escondido no desktop quando recolhido para
@@ -246,13 +247,18 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
             />
           </Link>
           {/* Botão recolher/expandir — só no desktop (lg+). No mobile o
-              controle é o hambúrguer do Header. */}
+              controle é o hambúrguer do Header. Quando expandido fica absoluto
+              à direita (logo centralizada); quando recolhido volta ao fluxo
+              para ser centralizado na faixa estreita. */}
           <button
             type="button"
             onClick={toggleCollapsed}
             aria-label={collapsed ? "Expandir barra lateral" : "Recolher barra lateral"}
             title={collapsed ? "Expandir barra lateral" : "Recolher barra lateral"}
-            className="hidden h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground lg:flex"
+            className={cn(
+              "hidden h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground lg:flex",
+              !collapsed && "lg:absolute lg:right-3",
+            )}
           >
             {collapsed ? (
               <PanelLeftOpen className="h-5 w-5" />
@@ -264,7 +270,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
             type="button"
             onClick={onClose}
             aria-label="Fechar menu"
-            className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground lg:hidden"
+            className="absolute right-3 flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground lg:hidden"
           >
             <X className="h-5 w-5" />
           </button>
