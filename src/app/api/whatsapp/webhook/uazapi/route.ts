@@ -152,6 +152,8 @@ async function processWebhook(body: UazapiWebhookBody) {
       .maybeSingle();
     channel = (byAccount as ChannelRow) ?? null;
   }
+  // Fallback por ID da instância (uazapi_instance_id), quando o payload traz
+  // o id dentro da mensagem.
   if (!channel && data.instance) {
     const { data: byInstance } = await db
       .from("whatsapp_channels")
@@ -159,6 +161,22 @@ async function processWebhook(body: UazapiWebhookBody) {
       .eq("uazapi_instance_id", data.instance)
       .maybeSingle();
     channel = (byInstance as ChannelRow) ?? null;
+  }
+
+  // Fallback por NOME da instância uazapi (uazapi_instance_name). Canais
+  // MIGRADOS do sistema antigo têm nomes legados ("crm-<user>-N") que não
+  // batem com o padrão channel-/account-; o uazapi manda esse nome em
+  // instanceName (ou data.instance), então casamos por ele aqui.
+  if (!channel) {
+    const candidate = instanceName || data.instance;
+    if (candidate) {
+      const { data: byName } = await db
+        .from("whatsapp_channels")
+        .select(CHANNEL_COLS)
+        .eq("uazapi_instance_name", candidate)
+        .maybeSingle();
+      channel = (byName as ChannelRow) ?? null;
+    }
   }
 
   if (!channel) {
