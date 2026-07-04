@@ -586,6 +586,17 @@ export function ConversationList({
 
   const hasContactFilters = selectedTagIds.length > 0 || selectedCompany !== null;
 
+  // Contadores para as pílulas de filtro (estilo WhatsApp).
+  const unreadCount = conversations.filter(
+    (c) =>
+      c.unread_count > 0 && !(archivedOverrides[c.id] ?? c.archived ?? false),
+  ).length;
+  const groupsCount = conversations.filter(
+    (c) => c.contact?.is_group === true,
+  ).length;
+  // Pílula "Todas" ativa só quando nenhum filtro rápido está aplicado.
+  const isAllActive = filter === "all" && groupFilter === "all";
+
   const handleSearchChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       setSearch(e.target.value);
@@ -734,36 +745,72 @@ export function ConversationList({
           />
         </div>
 
-        <div className="flex flex-wrap items-center gap-1">
-          <DropdownMenu>
-            <DropdownMenuTrigger className="inline-flex items-center justify-center h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground rounded-md hover:bg-muted">
-                {activeFilter?.label ?? "Todas"}
-                <ChevronDown className="h-3 w-3" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="start"
-              className="border-border bg-popover"
-            >
-              {FILTER_OPTIONS.map((opt) => (
-                <DropdownMenuItem
-                  key={opt.value}
-                  onClick={() => setFilter(opt.value)}
-                  className={cn(
-                    "text-sm",
-                    filter === opt.value
-                      ? "text-primary"
-                      : "text-popover-foreground"
-                  )}
-                >
-                  {opt.label}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
+        {/* Pílulas estilo WhatsApp — rolam na horizontal quando não cabem. */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {/* Todas */}
+          <button
+            type="button"
+            onClick={() => {
+              setFilter("all");
+              setGroupFilter("all");
+            }}
+            className={cn(
+              "shrink-0 rounded-full px-3 py-1 text-xs font-medium transition-colors",
+              isAllActive
+                ? "bg-primary/15 text-primary"
+                : "bg-muted text-muted-foreground hover:text-foreground",
+            )}
+          >
+            Todas
+          </button>
+
+          {/* Não lidas */}
+          <button
+            type="button"
+            onClick={() => {
+              setFilter("unread");
+              setGroupFilter("all");
+            }}
+            className={cn(
+              "inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors",
+              filter === "unread"
+                ? "bg-primary/15 text-primary"
+                : "bg-muted text-muted-foreground hover:text-foreground",
+            )}
+          >
+            Não lidas
+            {unreadCount > 0 && (
+              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-primary/20 px-1 text-[10px] font-bold text-primary">
+                {unreadCount}
+              </span>
+            )}
+          </button>
+
+          {/* Grupos */}
+          <button
+            type="button"
+            onClick={() => {
+              setGroupFilter("groups");
+              setFilter("all");
+            }}
+            className={cn(
+              "inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors",
+              groupFilter === "groups"
+                ? "bg-primary/15 text-primary"
+                : "bg-muted text-muted-foreground hover:text-foreground",
+            )}
+          >
+            Grupos
+            {groupsCount > 0 && (
+              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-primary/20 px-1 text-[10px] font-bold text-primary">
+                {groupsCount}
+              </span>
+            )}
+          </button>
 
           {/* Ordenação: mais recentes / mais antigas / criado primeiro */}
           <DropdownMenu>
-            <DropdownMenuTrigger className="inline-flex items-center justify-center h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground rounded-md hover:bg-muted">
+            <DropdownMenuTrigger className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground">
               {SORT_OPTIONS.find((s) => s.value === sortBy)?.label ??
                 "Ordenar"}
               <ChevronDown className="h-3 w-3" />
@@ -786,21 +833,34 @@ export function ConversationList({
             </DropdownMenuContent>
           </DropdownMenu>
 
-          {/* Filtro grupo x individual */}
+          {/* Mais status: abertas / pendentes / fechadas / arquivadas */}
           <DropdownMenu>
-            <DropdownMenuTrigger className="inline-flex items-center justify-center h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground rounded-md hover:bg-muted">
-              {GROUP_OPTIONS.find((g) => g.value === groupFilter)?.label ??
-                "Tipo"}
+            <DropdownMenuTrigger
+              className={cn(
+                "inline-flex shrink-0 items-center gap-1 rounded-full px-3 py-1 text-xs font-medium transition-colors",
+                filter !== "all" && filter !== "unread"
+                  ? "bg-primary/15 text-primary"
+                  : "bg-muted text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {filter !== "all" && filter !== "unread"
+                ? FILTER_OPTIONS.find((o) => o.value === filter)?.label ?? "Mais"
+                : "Mais"}
               <ChevronDown className="h-3 w-3" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="border-border bg-popover">
-              {GROUP_OPTIONS.map((opt) => (
+              {FILTER_OPTIONS.filter(
+                (o) => o.value !== "all" && o.value !== "unread",
+              ).map((opt) => (
                 <DropdownMenuItem
                   key={opt.value}
-                  onClick={() => setGroupFilter(opt.value)}
+                  onClick={() => {
+                    setFilter(opt.value);
+                    setGroupFilter("all");
+                  }}
                   className={cn(
                     "text-sm",
-                    groupFilter === opt.value
+                    filter === opt.value
                       ? "text-primary"
                       : "text-popover-foreground",
                   )}
@@ -815,7 +875,7 @@ export function ConversationList({
             <DropdownMenu>
               <DropdownMenuTrigger
                 className={cn(
-                  "inline-flex items-center justify-center h-7 gap-1 px-2 text-xs rounded-md hover:bg-muted",
+                  "inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-3 py-1 text-xs font-medium transition-colors",
                   selectedTagIds.length > 0
                     ? "text-primary"
                     : "text-muted-foreground hover:text-foreground"
@@ -857,7 +917,7 @@ export function ConversationList({
             <DropdownMenu>
               <DropdownMenuTrigger
                 className={cn(
-                  "inline-flex max-w-40 items-center justify-center h-7 gap-1 px-2 text-xs rounded-md hover:bg-muted",
+                  "inline-flex shrink-0 max-w-40 items-center gap-1 rounded-full bg-muted px-3 py-1 text-xs font-medium transition-colors",
                   selectedCompany
                     ? "text-primary"
                     : "text-muted-foreground hover:text-foreground"
