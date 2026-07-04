@@ -58,8 +58,27 @@ export async function PATCH(
     const { userId } = await params;
 
     const body = (await request.json().catch(() => null)) as
-      | { role?: unknown }
+      | { role?: unknown; is_attendant?: unknown }
       | null;
+
+    // Alterna se o membro ATENDE (aparece no seletor de atribuir). Independe
+    // do papel. RLS de account_members exige admin (garantido por requireRole).
+    if (typeof body?.is_attendant === "boolean") {
+      const { error } = await ctx.supabase
+        .from("account_members")
+        .update({ is_attendant: body.is_attendant })
+        .eq("account_id", ctx.accountId)
+        .eq("user_id", userId);
+      if (error) {
+        console.error("[PATCH member is_attendant] error:", error);
+        return NextResponse.json(
+          { error: "Falha ao atualizar" },
+          { status: 500 },
+        );
+      }
+      return NextResponse.json({ ok: true });
+    }
+
     const role = body?.role;
 
     if (!isAccountRole(role)) {

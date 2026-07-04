@@ -65,6 +65,8 @@ export interface AccountMember {
   avatar_url: string | null;
   role: AccountRole;
   joined_at: string;
+  /** Se o membro ATENDE (aparece no seletor de atribuir do inbox). */
+  is_attendant: boolean;
 }
 
 /**

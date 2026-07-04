@@ -25,6 +25,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import {
   AlertTriangle,
+  Headset,
   Loader2,
   Mail,
   MailX,
@@ -82,6 +83,7 @@ interface Member {
   avatar_url: string | null;
   role: AccountRole;
   joined_at: string;
+  is_attendant: boolean;
 }
 
 interface Invitation {
@@ -177,6 +179,47 @@ export function MembersTab() {
   useEffect(() => {
     void loadEverything();
   }, [loadEverything]);
+
+  async function handleAttendantToggle(member: Member, next: boolean) {
+    setPendingMemberAction(member.user_id);
+    setMembers((prev) =>
+      prev.map((m) =>
+        m.user_id === member.user_id ? { ...m, is_attendant: next } : m,
+      ),
+    );
+    try {
+      const res = await fetch(`/api/account/members/${member.user_id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_attendant: next }),
+      });
+      if (!res.ok) {
+        setMembers((prev) =>
+          prev.map((m) =>
+            m.user_id === member.user_id
+              ? { ...m, is_attendant: !next }
+              : m,
+          ),
+        );
+        toast.error('Falha ao atualizar');
+        return;
+      }
+      toast.success(
+        next
+          ? `${member.full_name || 'Membro'} agora atende`
+          : `${member.full_name || 'Membro'} não atende mais`,
+      );
+    } catch {
+      setMembers((prev) =>
+        prev.map((m) =>
+          m.user_id === member.user_id ? { ...m, is_attendant: !next } : m,
+        ),
+      );
+      toast.error('Falha de rede');
+    } finally {
+      setPendingMemberAction(null);
+    }
+  }
 
   async function handleRoleChange(member: Member, nextRole: AccountRole) {
     if (member.role === nextRole) return;
@@ -443,6 +486,32 @@ export function MembersTab() {
                         <RoleIcon className="size-3.5" />
                         {roleMeta.label}
                       </span>
+                    )}
+
+                    {/* Atende? Só quem atende aparece no seletor "Atribuir"
+                        do inbox. Admin+ alterna; gestores que não atendem
+                        podem ser desmarcados. */}
+                    {canManageMembers && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleAttendantToggle(member, !member.is_attendant)
+                        }
+                        disabled={isBusy}
+                        title={
+                          member.is_attendant
+                            ? "Atende (aparece em Atribuir) — clique para desmarcar"
+                            : "Não atende — clique para marcar"
+                        }
+                        className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50 ${
+                          member.is_attendant
+                            ? "border-primary/40 bg-primary/10 text-primary"
+                            : "border-border bg-muted text-muted-foreground"
+                        }`}
+                      >
+                        <Headset className="size-3.5" />
+                        {member.is_attendant ? "Atende" : "Não atende"}
+                      </button>
                     )}
 
                     {/* Remove. Admin+ only; never on the owner row;

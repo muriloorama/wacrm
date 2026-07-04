@@ -23,6 +23,7 @@ interface MemberRow {
   user_id: string;
   role: string;
   created_at: string;
+  is_attendant: boolean;
 }
 
 export async function GET() {
@@ -34,7 +35,7 @@ export async function GET() {
     // é membro, então isto já é escopado pela conta ativa do caller.
     const { data: memberRows, error } = await ctx.supabase
       .from("account_members")
-      .select("user_id, role, created_at")
+      .select("user_id, role, created_at, is_attendant")
       .eq("account_id", ctx.accountId)
       .order("created_at", { ascending: true });
 
@@ -90,6 +91,7 @@ export async function GET() {
           avatar_url: p?.avatar_url ?? null,
           role: row.role,
           joined_at: row.created_at,
+          is_attendant: row.is_attendant !== false,
         },
       ];
     });

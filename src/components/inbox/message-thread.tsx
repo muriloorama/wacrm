@@ -210,18 +210,28 @@ export function MessageThread({
   useEffect(() => {
     let cancelled = false;
     const supabase = createClient();
-    supabase
-      .from("profiles")
-      .select("*")
-      .order("full_name")
-      .then(({ data, error }) => {
-        if (cancelled) return;
-        if (error) {
-          console.error("Failed to fetch profiles:", error);
-          return;
-        }
-        setProfiles((data as Profile[]) ?? []);
-      });
+    (async () => {
+      // Só quem ATENDE (account_members.is_attendant) entra no seletor de
+      // atribuir — gestores/admins que não atendem ficam de fora. Se ninguém
+      // estiver marcado, mostra todos (evita seletor vazio).
+      const [profRes, memRes] = await Promise.all([
+        supabase.from("profiles").select("*").order("full_name"),
+        supabase.from("account_members").select("user_id, is_attendant"),
+      ]);
+      if (cancelled) return;
+      if (profRes.error) {
+        console.error("Failed to fetch profiles:", profRes.error);
+        return;
+      }
+      const all = (profRes.data as Profile[]) ?? [];
+      const attendants = new Set(
+        (memRes.data ?? [])
+          .filter((m) => (m as { is_attendant?: boolean }).is_attendant)
+          .map((m) => (m as { user_id: string }).user_id),
+      );
+      const filtered = all.filter((p) => attendants.has(p.user_id));
+      setProfiles(filtered.length > 0 ? filtered : all);
+    })();
     return () => {
       cancelled = true;
     };
