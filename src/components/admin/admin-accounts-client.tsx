@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Copy, Loader2, LogIn, LogOut, Plus } from "lucide-react";
+import { Copy, Loader2, LogIn, LogOut, Plus, Trash2 } from "lucide-react";
 
 import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
@@ -73,6 +73,10 @@ export function AdminAccountsClient() {
     email: string;
     password: string;
   } | null>(null);
+  // Exclusão de conta (destrutivo): exige digitar o nome para confirmar.
+  const [deleteTarget, setDeleteTarget] = useState<AdminAccount | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState("");
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -265,6 +269,31 @@ export function AdminAccountsClient() {
     }
   };
 
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(
+        `/api/admin/accounts/${encodeURIComponent(deleteTarget.id)}`,
+        { method: "DELETE" },
+      );
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        throw new Error(body?.error ?? "Falha ao excluir");
+      }
+      setAccounts((prev) => prev.filter((a) => a.id !== deleteTarget.id));
+      toast.success(`Conta "${deleteTarget.name}" excluída`);
+      setDeleteTarget(null);
+      setDeleteConfirm("");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Falha ao excluir");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   if (loading) {
     return (
       <p className="text-sm text-muted-foreground">Carregando contas…</p>
@@ -405,6 +434,18 @@ export function AdminAccountsClient() {
                     >
                       {draft?.saving ? "Salvando…" : "Salvar"}
                     </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setDeleteConfirm("");
+                        setDeleteTarget(a);
+                      }}
+                      title="Excluir conta"
+                      className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    >
+                      <Trash2 className="size-4" />
+                    </Button>
                   </div>
                 </TableCell>
               </TableRow>
@@ -539,6 +580,77 @@ export function AdminAccountsClient() {
           </div>
           <DialogFooter>
             <Button onClick={() => setTempPassword(null)}>Entendi</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Diálogo: excluir conta (destrutivo — exige digitar o nome) */}
+      <Dialog
+        open={deleteTarget !== null}
+        onOpenChange={(o) => {
+          if (!o && !deleting) {
+            setDeleteTarget(null);
+            setDeleteConfirm("");
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="text-destructive">
+              Excluir conta
+            </DialogTitle>
+            <DialogDescription>
+              Isto apaga <strong>permanentemente</strong> a conta{" "}
+              <strong>{deleteTarget?.name}</strong> e TODOS os seus dados
+              (contatos, conversas, mensagens, negócios, funis e canais). Os
+              usuários (logins) NÃO são apagados. Esta ação é irreversível.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="del-confirm">
+              Para confirmar, digite o nome da conta:{" "}
+              <span className="font-mono text-foreground">
+                {deleteTarget?.name}
+              </span>
+            </Label>
+            <Input
+              id="del-confirm"
+              value={deleteConfirm}
+              onChange={(e) => setDeleteConfirm(e.target.value)}
+              placeholder={deleteTarget?.name}
+              autoFocus
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setDeleteTarget(null);
+                setDeleteConfirm("");
+              }}
+              disabled={deleting}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDelete}
+              disabled={
+                deleting || deleteConfirm.trim() !== deleteTarget?.name.trim()
+              }
+            >
+              {deleting ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  Excluindo…
+                </>
+              ) : (
+                <>
+                  <Trash2 className="size-4" />
+                  Excluir tudo
+                </>
+              )}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

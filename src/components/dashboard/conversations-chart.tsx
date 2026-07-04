@@ -314,13 +314,13 @@ function shortDayLabel(key: string): string {
   // appended time avoids timezone-shift surprises across midnight.
   const [y, m, d] = key.split('-').map(Number)
   const date = new Date(y, m - 1, d)
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  return date.toLocaleDateString('pt-BR', { month: 'short', day: 'numeric' })
 }
 
 function longDayLabel(key: string): string {
   const [y, m, d] = key.split('-').map(Number)
   const date = new Date(y, m - 1, d)
-  return date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+  return date.toLocaleDateString('pt-BR', { weekday: 'short', month: 'short', day: 'numeric' })
 }
 
 /**
