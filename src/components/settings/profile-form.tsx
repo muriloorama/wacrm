@@ -32,12 +32,15 @@ const ALLOWED_MIME = new Set([
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function ProfileForm() {
-  const { user, profile, refreshProfile } = useAuth();
+  const { user, profile, account, canEditSettings, refreshProfile } = useAuth();
   const supabase = createClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
+  // Nome da CONTA (workspace), compartilhado com a equipe. Editável por
+  // admin+ (canEditSettings); persistido via PATCH /api/account.
+  const [accountName, setAccountName] = useState('');
   const [pendingAvatar, setPendingAvatar] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [removeAvatar, setRemoveAvatar] = useState(false);
@@ -50,6 +53,11 @@ export function ProfileForm() {
     setFullName(profile.full_name ?? '');
     setEmail(profile.email ?? '');
   }, [profile]);
+
+  // Seed do nome da conta quando a conta (ativa) resolve/troca.
+  useEffect(() => {
+    setAccountName(account?.name ?? '');
+  }, [account?.name]);
 
   // Cleanup object URLs to avoid leaks.
   useEffect(() => {
@@ -135,6 +143,30 @@ export function ProfileForm() {
         throw new Error(`Falha ao salvar: ${updateError.message}`);
       }
 
+      // Renomeia a conta (workspace) se o admin mudou o nome. Via
+      // PATCH /api/account (admin+), separado do perfil pessoal.
+      const trimmedAccountName = accountName.trim();
+      if (
+        canEditSettings &&
+        account &&
+        trimmedAccountName.length > 0 &&
+        trimmedAccountName !== account.name
+      ) {
+        const res = await fetch('/api/account', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: trimmedAccountName }),
+        });
+        if (!res.ok) {
+          const payload = (await res.json().catch(() => null)) as {
+            error?: string;
+          } | null;
+          throw new Error(
+            payload?.error ?? 'Falha ao renomear a conta',
+          );
+        }
+      }
+
       // Email change goes through Supabase Auth, which emails a
       // confirmation to both the old and new addresses. We don't
       // touch profiles.email — Supabase will push the change there
@@ -175,12 +207,19 @@ export function ProfileForm() {
     }
   };
 
+  const accountNameDirty =
+    canEditSettings &&
+    !!account &&
+    accountName.trim().length > 0 &&
+    accountName.trim() !== account.name;
+
   const dirty =
     !!profile &&
     (fullName.trim() !== (profile.full_name ?? '') ||
       email.trim().toLowerCase() !== (profile.email ?? '').toLowerCase() ||
       pendingAvatar !== null ||
-      removeAvatar);
+      removeAvatar ||
+      accountNameDirty);
 
   const joined = user?.created_at
     ? new Date(user.created_at).toLocaleDateString(undefined, {
@@ -284,6 +323,28 @@ export function ProfileForm() {
                 </span>
               </p>
             )}
+          </div>
+
+          {/* Account name — workspace-level, shared with the team. Só
+              admin+ pode editar; os demais veem o nome desabilitado. */}
+          <div className="space-y-2">
+            <Label htmlFor="account-name" className="text-foreground">
+              Nome da conta
+            </Label>
+            <Input
+              id="account-name"
+              value={accountName}
+              onChange={(e) => setAccountName(e.target.value)}
+              placeholder="Minha empresa"
+              maxLength={80}
+              disabled={saving || !canEditSettings || !account}
+              required={canEditSettings}
+            />
+            <p className="text-xs text-muted-foreground">
+              {canEditSettings
+                ? 'Nome do workspace, compartilhado com toda a equipe e usado no seletor de contas.'
+                : 'Somente administradores podem alterar o nome da conta.'}
+            </p>
           </div>
 
           {/* Read-only block */}
