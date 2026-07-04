@@ -426,34 +426,23 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
           {showAccountStrip && account?.name ? (
             <div
               className={cn(
-                "mb-2 flex items-center gap-2 px-3 text-xs text-muted-foreground",
+                "mb-2 px-3",
                 collapsed && "lg:hidden",
               )}
             >
-              <UsersRound className="size-3.5 shrink-0" />
-              {/* `title=` exposes the full name on hover when it
-                  gets truncated (long account names + narrow
-                  sidebars). Cheap a11y win. */}
-              <span className="truncate" title={account.name}>
-                {account.name}
-              </span>
+              {/* Linha 1: nome da conta. `title=` mostra o nome completo no
+                  hover quando trunca (nomes longos + sidebar estreita). */}
+              <div className="flex items-center gap-2 text-xs font-medium text-foreground">
+                <UsersRound className="size-3.5 shrink-0 text-muted-foreground" />
+                <span className="truncate" title={account.name}>
+                  {account.name}
+                </span>
+              </div>
+              {/* Linha 2: papel, discreto (sem cor) e alinhado sob o nome. */}
               {accountRole ? (
-                // Always render the chip — owners used to be
-                // invisible here, which made them indistinguishable
-                // from admins at a glance. Now everyone sees their
-                // role (with a colour cue) regardless of tier.
-                (() => {
-                  const meta = ROLE_CHIP[accountRole];
-                  const Icon = meta.icon;
-                  return (
-                    <span
-                      className={`ml-auto inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider ${meta.className}`}
-                    >
-                      <Icon className="size-3" />
-                      {meta.label}
-                    </span>
-                  );
-                })()
+                <p className="mt-0.5 pl-[1.375rem] text-[11px] text-muted-foreground">
+                  {ROLE_CHIP[accountRole].label}
+                </p>
               ) : null}
             </div>
           ) : null}
