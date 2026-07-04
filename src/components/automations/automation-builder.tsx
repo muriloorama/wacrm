@@ -354,6 +354,7 @@ function ContactFieldSelect({
       <option value="name">Nome</option>
       <option value="email">E-mail</option>
       <option value="company">Empresa</option>
+      <option value="origem">Origem (id: ex. instagram)</option>
       {customFields.length > 0 && (
         <optgroup label="Campos personalizados">
           {customFields.map((f) => (

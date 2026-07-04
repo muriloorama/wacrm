@@ -481,7 +481,9 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
         return `custom field updated`
       }
 
-      const allowed = new Set(['name', 'email', 'company'])
+      // `origem` (de onde o lead veio) é uma coluna gravável por automação —
+      // o valor é o id de uma origem configurada da conta (ex.: 'instagram').
+      const allowed = new Set(['name', 'email', 'company', 'origem'])
       if (!allowed.has(cfg.field)) {
         return `field ${cfg.field} not writable from automations`
       }
