@@ -348,7 +348,9 @@ export default function PipelinesPage() {
   }
 
   return (
-    <div className="space-y-6">
+    // Altura cheia + flex-col: o board ocupa o espaço restante e ROLA por
+    // dentro de cada coluna, em vez de esticar a página inteira para baixo.
+    <div className="flex h-full flex-col gap-6">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
@@ -446,14 +448,18 @@ export default function PipelinesPage() {
         </div>
       ) : (
         <>
-          <PipelineAnalytics stages={stages} deals={deals} />
-          <PipelineBoard
-            stages={stages}
-            deals={deals}
-            onDealMoved={handleDealMoved}
-            onAddDeal={handleAddDeal}
-            onEditDeal={handleEditDeal}
-          />
+          <div className="shrink-0">
+            <PipelineAnalytics stages={stages} deals={deals} />
+          </div>
+          <div className="min-h-0 flex-1">
+            <PipelineBoard
+              stages={stages}
+              deals={deals}
+              onDealMoved={handleDealMoved}
+              onAddDeal={handleAddDeal}
+              onEditDeal={handleEditDeal}
+            />
+          </div>
         </>
       )}
 
