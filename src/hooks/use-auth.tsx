@@ -87,6 +87,12 @@ interface AuthContextValue {
   accountRole: AccountRole | null;
   /** Lightweight account meta — id + name + default_currency. Null while loading. */
   account: AccountSummary | null;
+  /** Todas as contas de que o usuário é membro (para o seletor de conta).
+   *  Vazio enquanto carrega ou quando o usuário não tem workspace. */
+  accounts: AccountSummary[];
+  /** Troca a conta ATIVA para outra de que o usuário é membro e recarrega
+   *  o contexto. No-op se já for a conta ativa. */
+  switchAccount: (accountId: string) => Promise<void>;
   /** Account default deal currency. Falls back to DEFAULT_CURRENCY
    *  while loading or when no account is resolved, so callers can use
    *  it unconditionally. */
@@ -118,6 +124,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [account, setAccount] = useState<AccountSummary | null>(null);
+  // Todas as contas de que o usuário é membro (via account_members) —
+  // alimenta o seletor de conta. A conta ativa é `account`/`accountId`.
+  const [accounts, setAccounts] = useState<AccountSummary[]>([]);
   const [loading, setLoading] = useState(true);
   // Tracked separately from `loading`. The session settles fast (one
   // local cookie read); the profile fetch crosses the network and
@@ -201,6 +210,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const accountRole = isAccountRole(data.account_role)
           ? data.account_role
           : null;
+
+        // Lista de contas de que o usuário é membro (para o seletor).
+        // RLS de account_members permite ler as próprias linhas; o join
+        // traz nome/moeda de cada conta. Best-effort: se falhar, o seletor
+        // apenas mostra a conta ativa.
+        const { data: memberRows, error: membersErr } = await supabase
+          .from("account_members")
+          .select("account:accounts(id, name, default_currency)")
+          .eq("user_id", userId);
+        if (membersErr) {
+          console.error("[AuthProvider] fetchAccounts error:", membersErr.message);
+        } else if (memberRows) {
+          const list = memberRows
+            .map((r) => {
+              const a = Array.isArray(r.account) ? r.account[0] : r.account;
+              return a
+                ? {
+                    id: a.id as string,
+                    name: (a.name as string) ?? "Conta",
+                    default_currency:
+                      (a.default_currency as string) ?? DEFAULT_CURRENCY,
+                  }
+                : null;
+            })
+            .filter((a): a is AccountSummary => a != null)
+            .sort((a, b) => a.name.localeCompare(b.name));
+          setAccounts(list);
+        }
 
         setProfile({
           id: data.id,
@@ -312,6 +349,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setProfile(null);
     setAccount(null);
+    setAccounts([]);
     window.location.href = "/login";
   }, []);
 
@@ -319,6 +357,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!user?.id) return;
     await fetchProfile(user.id);
   }, [user?.id, fetchProfile]);
+
+  // Troca a conta ativa via RPC (valida membership + sincroniza o cache
+  // profiles.account_role) e recarrega o perfil para propagar o novo
+  // contexto a toda a árvore. Um refresh completo garante que dados já
+  // carregados escopados na conta antiga (inbox, contatos…) sejam
+  // refetchados do zero pela nova conta.
+  const switchAccount = useCallback(
+    async (accountId: string) => {
+      if (!user?.id || accountId === profile?.account_id) return;
+      const supabase = createClient();
+      const { error } = await supabase.rpc("switch_account", {
+        p_account_id: accountId,
+      });
+      if (error) {
+        console.error("[AuthProvider] switchAccount error:", error.message);
+        return;
+      }
+      // Recarrega a app na conta nova — a forma mais robusta de resetar
+      // todo o estado escopado por conta (listas, realtime, filtros).
+      window.location.href = "/dashboard";
+    },
+    [user?.id, profile?.account_id],
+  );
 
   // Derive the role booleans once per profile change rather than on
   // every consumer render. Cheap regardless, but the memo also gives
@@ -349,6 +410,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signOut,
         refreshProfile,
         account,
+        accounts,
+        switchAccount,
         defaultCurrency: account?.default_currency ?? DEFAULT_CURRENCY,
         ...derived,
       }}
@@ -379,6 +442,8 @@ export function useAuth(): AuthContextValue {
       },
       refreshProfile: async () => {},
       account: null,
+      accounts: [],
+      switchAccount: async () => {},
       defaultCurrency: DEFAULT_CURRENCY,
       accountId: null,
       accountRole: null,

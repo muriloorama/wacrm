@@ -14,6 +14,7 @@ import { NextResponse } from "next/server";
 
 import { isSuperAdmin } from "@/lib/auth/super-admin";
 import { supabaseAdmin } from "@/lib/automations/admin-client";
+import { createClient } from "@/lib/supabase/server";
 
 interface AdminAccountRow {
   id: string;
@@ -24,6 +25,8 @@ interface AdminAccountRow {
   max_channels: number;
   max_users: number;
   created_at: string | null;
+  /** Se o super admin logado já é membro desta conta (mostra Entrar/Sair). */
+  isMember: boolean;
 }
 
 // Monta o mapa user_id -> e-mail lendo auth.users em páginas. A API de
@@ -54,31 +57,51 @@ export async function GET() {
     return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
   }
 
+  // Quem está chamando — para marcar em quais contas o super admin já é
+  // membro (botão Entrar vs Sair). Lê o próprio usuário via cookie.
+  const cookieClient = await createClient();
+  const {
+    data: { user: caller },
+  } = await cookieClient.auth.getUser();
+
   try {
     const admin = supabaseAdmin();
 
-    const [accountsRes, profilesRes, channelsRes, emailMap] = await Promise.all(
-      [
+    const [accountsRes, membersRes, superRes, channelsRes, emailMap] =
+      await Promise.all([
         admin
           .from("accounts")
           .select("id, name, owner_user_id, max_channels, max_users, created_at")
           .order("created_at", { ascending: true }),
-        // Todos os perfis: contamos membros por account_id em memória.
-        admin.from("profiles").select("account_id"),
+        // Associação real: account_members (pós multi-conta). Traz user_id
+        // para excluir super admins da contagem e marcar isMember do caller.
+        admin.from("account_members").select("account_id, user_id"),
+        // Ids de super admin — memberships deles não contam como assento.
+        admin.from("profiles").select("user_id").eq("is_super_admin", true),
         // Todos os canais WhatsApp: contamos por account_id em memória.
         admin.from("whatsapp_channels").select("account_id"),
         buildEmailMap(),
-      ],
-    );
+      ]);
 
     if (accountsRes.error) throw accountsRes.error;
-    if (profilesRes.error) throw profilesRes.error;
+    if (membersRes.error) throw membersRes.error;
+    if (superRes.error) throw superRes.error;
     if (channelsRes.error) throw channelsRes.error;
 
+    const superAdminIds = new Set(
+      (superRes.data ?? []).map((r) => (r as { user_id: string }).user_id),
+    );
+
     const memberCounts = new Map<string, number>();
-    for (const row of profilesRes.data ?? []) {
-      const id = (row as { account_id: string | null }).account_id;
-      if (id) memberCounts.set(id, (memberCounts.get(id) ?? 0) + 1);
+    const callerAccounts = new Set<string>();
+    for (const row of membersRes.data ?? []) {
+      const r = row as { account_id: string | null; user_id: string };
+      if (!r.account_id) continue;
+      // Super admins não consomem assento — fora da contagem.
+      if (!superAdminIds.has(r.user_id)) {
+        memberCounts.set(r.account_id, (memberCounts.get(r.account_id) ?? 0) + 1);
+      }
+      if (caller && r.user_id === caller.id) callerAccounts.add(r.account_id);
     }
 
     const channelCounts = new Map<string, number>();
@@ -107,6 +130,7 @@ export async function GET() {
         max_channels: row.max_channels ?? 0,
         max_users: row.max_users ?? 0,
         created_at: row.created_at,
+        isMember: callerAccounts.has(row.id),
       };
     });
 

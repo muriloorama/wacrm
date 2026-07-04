@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { LogIn, LogOut } from "lucide-react";
 
+import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -23,6 +25,7 @@ interface AdminAccount {
   max_channels: number;
   max_users: number;
   created_at: string | null;
+  isMember: boolean;
 }
 
 // Estado editável por linha: o que está nos inputs + se está salvando.
@@ -40,10 +43,13 @@ function formatDate(iso: string | null): string {
 }
 
 export function AdminAccountsClient() {
+  const { switchAccount, accountId } = useAuth();
   const [accounts, setAccounts] = useState<AdminAccount[]>([]);
   const [drafts, setDrafts] = useState<Record<string, RowDraft>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Conta em que uma ação de entrar/sair está em curso (desabilita o botão).
+  const [membershipBusy, setMembershipBusy] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -147,6 +153,40 @@ export function AdminAccountsClient() {
     }
   };
 
+  // Entra (POST) ou sai (DELETE) de uma conta como super admin. Ao entrar,
+  // troca imediatamente para ela (switchAccount recarrega a app na conta).
+  const toggleMembership = async (account: AdminAccount) => {
+    setMembershipBusy(account.id);
+    try {
+      const res = await fetch(
+        `/api/admin/accounts/${encodeURIComponent(account.id)}/membership`,
+        { method: account.isMember ? "DELETE" : "POST" },
+      );
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        throw new Error(body?.error ?? "Falha na operação");
+      }
+      if (account.isMember) {
+        // Saiu: reflete na tabela. Se era a conta ativa, recarrega para
+        // sair do contexto dela.
+        setAccounts((prev) =>
+          prev.map((a) => (a.id === account.id ? { ...a, isMember: false } : a)),
+        );
+        toast.success(`Você saiu de "${account.name}"`);
+        if (accountId === account.id) window.location.href = "/dashboard";
+      } else {
+        toast.success(`Entrando em "${account.name}"…`);
+        await switchAccount(account.id);
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Falha na operação");
+    } finally {
+      setMembershipBusy(null);
+    }
+  };
+
   if (loading) {
     return (
       <p className="text-sm text-muted-foreground">Carregando contas…</p>
@@ -242,13 +282,38 @@ export function AdminAccountsClient() {
                   {formatDate(a.created_at)}
                 </TableCell>
                 <TableCell className="text-right">
-                  <Button
-                    size="sm"
-                    onClick={() => save(a)}
-                    disabled={draft?.saving || !dirty}
-                  >
-                    {draft?.saving ? "Salvando…" : "Salvar"}
-                  </Button>
+                  <div className="flex items-center justify-end gap-2">
+                    <Button
+                      size="sm"
+                      variant={a.isMember ? "outline" : "secondary"}
+                      onClick={() => toggleMembership(a)}
+                      disabled={membershipBusy === a.id}
+                      title={
+                        a.isMember
+                          ? "Sair desta conta"
+                          : "Entrar e operar nesta conta"
+                      }
+                    >
+                      {a.isMember ? (
+                        <>
+                          <LogOut className="size-3.5" />
+                          Sair
+                        </>
+                      ) : (
+                        <>
+                          <LogIn className="size-3.5" />
+                          Entrar
+                        </>
+                      )}
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={() => save(a)}
+                      disabled={draft?.saving || !dirty}
+                    >
+                      {draft?.saving ? "Salvando…" : "Salvar"}
+                    </Button>
+                  </div>
                 </TableCell>
               </TableRow>
             );

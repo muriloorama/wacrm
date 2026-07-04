@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Clock } from "lucide-react";
 import { AuthProvider, useAuth } from "@/hooks/use-auth";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
@@ -12,7 +13,7 @@ import { PresenceHeartbeat } from "@/components/presence/presence-heartbeat";
 // client components can't export Next's metadata object.
 
 function DashboardShellInner({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth();
+  const { user, loading, profileLoading, accountId, signOut } = useAuth();
   const router = useRouter();
 
   // Sidebar drawer state — only used on mobile. On lg+ the sidebar is
@@ -38,6 +39,38 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
   }
 
   if (!user) return null;
+
+  // Sem workspace: o usuário tem login mas não é membro de nenhuma conta
+  // (signup é invite-only; o acesso só existe após ser atrelado a uma
+  // conta por convite ou pelo super admin). Mostra uma tela de espera em
+  // vez do dashboard vazio/quebrado. Espera o perfil resolver para não
+  // piscar isso durante o carregamento.
+  if (!profileLoading && !accountId) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-background p-6">
+        <div className="flex max-w-sm flex-col items-center gap-4 text-center">
+          <div className="flex size-12 items-center justify-center rounded-full bg-primary/10 text-primary">
+            <Clock className="size-6" />
+          </div>
+          <h1 className="text-lg font-semibold text-foreground">
+            Aguardando acesso
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            Sua conta ainda não está vinculada a nenhum workspace. Peça um
+            convite ao administrador — assim que você for adicionado, o acesso
+            aparece aqui.
+          </p>
+          <button
+            type="button"
+            onClick={signOut}
+            className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            Sair
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">

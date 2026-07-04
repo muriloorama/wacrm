@@ -27,6 +27,7 @@ import {
   inviteUrl,
 } from "@/lib/auth/invitations";
 import { isAccountRole } from "@/lib/auth/roles";
+import { supabaseAdmin } from "@/lib/automations/admin-client";
 import {
   checkRateLimit,
   rateLimitResponse,
@@ -212,6 +213,41 @@ export async function POST(request: Request) {
         );
       }
       label = trimmed === "" ? null : trimmed;
+    }
+
+    // Enforcement de max_users: assentos = membros (excluindo super admins,
+    // que não consomem assento) + convites pendentes. Se já bateu o limite,
+    // bloqueia o novo convite. Contagem via admin client (o caller já é
+    // admin da conta, validado por requireRole). max_users = 0 → sem limite.
+    const admin = supabaseAdmin();
+    const [acctRes, membersRes, pendingRes, superRes] = await Promise.all([
+      admin.from("accounts").select("max_users").eq("id", ctx.accountId).maybeSingle(),
+      admin.from("account_members").select("user_id").eq("account_id", ctx.accountId),
+      admin
+        .from("account_invitations")
+        .select("id")
+        .eq("account_id", ctx.accountId)
+        .is("accepted_at", null)
+        .gt("expires_at", new Date().toISOString()),
+      admin.from("profiles").select("user_id").eq("is_super_admin", true),
+    ]);
+    const maxUsers = (acctRes.data?.max_users as number | null) ?? 0;
+    if (maxUsers > 0) {
+      const superIds = new Set(
+        (superRes.data ?? []).map((r) => (r as { user_id: string }).user_id),
+      );
+      const memberCount = (membersRes.data ?? []).filter(
+        (m) => !superIds.has((m as { user_id: string }).user_id),
+      ).length;
+      const pendingCount = pendingRes.data?.length ?? 0;
+      if (memberCount + pendingCount >= maxUsers) {
+        return NextResponse.json(
+          {
+            error: `Limite de ${maxUsers} usuário(s) atingido para esta conta. Remova um membro ou convite pendente, ou peça ao suporte para aumentar o limite.`,
+          },
+          { status: 403 },
+        );
+      }
     }
 
     const { token, hash } = generateInviteToken();

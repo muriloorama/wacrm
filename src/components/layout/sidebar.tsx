@@ -10,6 +10,7 @@ import { useTotalUnread } from "@/hooks/use-total-unread";
 import { useUnreadNotifications } from "@/hooks/use-unread-notifications";
 import {
   Bell,
+  Check,
   Crown,
   GitBranch,
   LayoutDashboard,
@@ -114,7 +115,16 @@ interface SidebarProps {
 
 export function Sidebar({ open = false, onClose }: SidebarProps) {
   const pathname = usePathname();
-  const { profile, profileLoading, account, accountRole, signOut } = useAuth();
+  const {
+    profile,
+    profileLoading,
+    account,
+    accountRole,
+    accounts,
+    accountId,
+    switchAccount,
+    signOut,
+  } = useAuth();
   const totalUnread = useTotalUnread();
   const unreadNotifications = useUnreadNotifications();
 
@@ -486,6 +496,32 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
               sideOffset={6}
               className="min-w-56 bg-popover text-popover-foreground ring-border"
             >
+              {/* Seletor de conta — só quando o usuário é membro de mais de
+                  uma. Troca a conta ATIVA (switch_account) e recarrega. */}
+              {accounts.length > 1 ? (
+                <>
+                  <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
+                    Contas
+                  </div>
+                  {accounts.map((a) => (
+                    <DropdownMenuItem
+                      key={a.id}
+                      closeOnClick={false}
+                      onClick={() => switchAccount(a.id)}
+                      className="text-popover-foreground focus:bg-accent focus:text-accent-foreground"
+                    >
+                      <UsersRound className="size-4 shrink-0" />
+                      <span className="flex-1 truncate" title={a.name}>
+                        {a.name}
+                      </span>
+                      {a.id === accountId ? (
+                        <Check className="size-4 shrink-0 text-primary" />
+                      ) : null}
+                    </DropdownMenuItem>
+                  ))}
+                  <DropdownMenuSeparator className="bg-border" />
+                </>
+              ) : null}
               <DropdownMenuItem
                 render={
                   <Link

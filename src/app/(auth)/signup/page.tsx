@@ -128,6 +128,38 @@ function SignupPageInner() {
     );
   }
 
+  // Cadastro é APENAS por convite. Sem um token de convite na URL, o
+  // signup público fica fechado (a entrada é por convite ou pelo super
+  // admin; no futuro, pelo checkout). O fluxo por convite abaixo segue
+  // ativo: o convidado cria o login aqui e depois aceita em /join.
+  if (!inviteToken) {
+    return (
+      <Card className="w-full max-w-md rounded-2xl border-border/60 bg-card/80 shadow-2xl backdrop-blur-xl">
+        <CardHeader className="items-center text-center">
+          <BrandLogo className="mb-2 h-12" />
+          <CardTitle className="text-2xl font-semibold text-foreground">
+            Cadastro por convite
+          </CardTitle>
+          <CardDescription className="text-muted-foreground">
+            O acesso ao Super CRM é feito por convite. Peça um convite ao
+            administrador da conta — o link leva você direto para criar seu
+            acesso.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Link href="/login">
+            <Button
+              variant="outline"
+              className="w-full border-border text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              Voltar para entrar
+            </Button>
+          </Link>
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
       <Card className="w-full max-w-md rounded-2xl border-border/60 bg-card/80 shadow-2xl backdrop-blur-xl">
         <CardHeader className="items-center text-center">
