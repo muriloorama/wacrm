@@ -166,6 +166,7 @@ export async function PATCH(request: Request) {
   try {
     const body = (await request.json().catch(() => null)) as {
       accountId?: unknown;
+      name?: unknown;
       max_channels?: unknown;
       max_users?: unknown;
     } | null;
@@ -190,13 +191,29 @@ export async function PATCH(request: Request) {
       );
     }
 
-    const update: Record<string, number> = {};
+    const update: Record<string, number | string> = {};
     if (maxChannels !== null) update.max_channels = maxChannels;
     if (maxUsers !== null) update.max_users = maxUsers;
+    // Nome da conta (opcional).
+    if (body?.name !== undefined) {
+      if (typeof body.name !== "string" || body.name.trim().length === 0) {
+        return NextResponse.json(
+          { error: "Nome da conta inválido" },
+          { status: 400 },
+        );
+      }
+      if (body.name.trim().length > 80) {
+        return NextResponse.json(
+          { error: "Nome deve ter 80 caracteres ou menos" },
+          { status: 400 },
+        );
+      }
+      update.name = body.name.trim();
+    }
 
     if (Object.keys(update).length === 0) {
       return NextResponse.json(
-        { error: "Nenhum limite para atualizar" },
+        { error: "Nada para atualizar" },
         { status: 400 },
       );
     }
@@ -206,7 +223,7 @@ export async function PATCH(request: Request) {
       .from("accounts")
       .update(update)
       .eq("id", accountId)
-      .select("id, max_channels, max_users")
+      .select("id, name, max_channels, max_users")
       .maybeSingle();
 
     if (error) throw error;
@@ -221,7 +238,187 @@ export async function PATCH(request: Request) {
   } catch (err) {
     console.error("[api/admin/accounts] PATCH error:", err);
     return NextResponse.json(
-      { error: "Falha ao atualizar limites" },
+      { error: "Falha ao atualizar a conta" },
+      { status: 500 },
+    );
+  }
+}
+
+// Gera uma senha temporária forte (mostrada 1x ao super admin ao criar
+// uma conta com um dono novo). O dono pode trocá-la depois no Perfil.
+function generateTempPassword(): string {
+  const alphabet =
+    "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  const bytes = new Uint8Array(14);
+  globalThis.crypto.getRandomValues(bytes);
+  let out = "";
+  for (const b of bytes) out += alphabet[b % alphabet.length];
+  return out + "@9"; // garante dígito + símbolo
+}
+
+// ============================================================
+// POST /api/admin/accounts  (SUPER ADMIN)
+//
+// Cria uma conta nova e define o dono. Corpo:
+//   { name, ownerEmail, max_channels?, max_users? }
+//
+// Se o email ainda não tem login, cria o usuário (senha temporária
+// retornada 1x). Se já existe, é reaproveitado. O usuário vira 'owner'
+// da nova conta em account_members, e a conta ativa dele passa a ser
+// esta se ele ainda não tinha nenhuma.
+// ============================================================
+export async function POST(request: Request) {
+  if (!(await isSuperAdmin())) {
+    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+  }
+
+  try {
+    const body = (await request.json().catch(() => null)) as {
+      name?: unknown;
+      ownerEmail?: unknown;
+      max_channels?: unknown;
+      max_users?: unknown;
+    } | null;
+
+    const name = typeof body?.name === "string" ? body.name.trim() : "";
+    const ownerEmail =
+      typeof body?.ownerEmail === "string"
+        ? body.ownerEmail.trim().toLowerCase()
+        : "";
+
+    if (!name) {
+      return NextResponse.json(
+        { error: "Nome da conta é obrigatório" },
+        { status: 400 },
+      );
+    }
+    if (name.length > 80) {
+      return NextResponse.json(
+        { error: "Nome deve ter 80 caracteres ou menos" },
+        { status: 400 },
+      );
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ownerEmail)) {
+      return NextResponse.json(
+        { error: "E-mail do dono inválido" },
+        { status: 400 },
+      );
+    }
+
+    let maxChannels: number | null;
+    let maxUsers: number | null;
+    try {
+      maxChannels = parseLimit(body?.max_channels, "max_channels");
+      maxUsers = parseLimit(body?.max_users, "max_users");
+    } catch (e) {
+      return NextResponse.json(
+        { error: e instanceof Error ? e.message : "Valor inválido" },
+        { status: 400 },
+      );
+    }
+
+    const admin = supabaseAdmin();
+
+    // Resolve/cria o usuário dono pelo email.
+    let ownerId: string | null = null;
+    let tempPassword: string | null = null;
+
+    // Procura um usuário existente com esse email (via profiles, mais barato).
+    const { data: existingProfile } = await admin
+      .from("profiles")
+      .select("user_id")
+      .ilike("email", ownerEmail)
+      .maybeSingle();
+
+    if (existingProfile?.user_id) {
+      ownerId = existingProfile.user_id as string;
+    } else {
+      tempPassword = generateTempPassword();
+      const { data: created, error: createErr } =
+        await admin.auth.admin.createUser({
+          email: ownerEmail,
+          password: tempPassword,
+          email_confirm: true,
+        });
+      if (createErr || !created?.user) {
+        return NextResponse.json(
+          {
+            error:
+              createErr?.message ??
+              "Falha ao criar o usuário dono. O e-mail já pode existir.",
+          },
+          { status: 400 },
+        );
+      }
+      ownerId = created.user.id;
+      // O trigger handle_new_user cria o profile (account_id NULL). Aguarda
+      // um instante não é necessário — inserimos abaixo com upsert defensivo.
+    }
+
+    // Cria a conta.
+    const { data: account, error: acctErr } = await admin
+      .from("accounts")
+      .insert({
+        name,
+        owner_user_id: ownerId,
+        ...(maxChannels !== null ? { max_channels: maxChannels } : {}),
+        ...(maxUsers !== null ? { max_users: maxUsers } : {}),
+      })
+      .select("id, name, max_channels, max_users")
+      .single();
+
+    if (acctErr || !account) {
+      console.error("[api/admin/accounts] POST create account:", acctErr);
+      return NextResponse.json(
+        { error: "Falha ao criar a conta" },
+        { status: 500 },
+      );
+    }
+
+    // Garante que o profile do dono exista (defensivo caso o trigger não
+    // tenha rodado ainda para um usuário recém-criado).
+    await admin
+      .from("profiles")
+      .upsert(
+        { user_id: ownerId, email: ownerEmail },
+        { onConflict: "user_id", ignoreDuplicates: true },
+      );
+
+    // Dono como membro 'owner'.
+    const { error: memberErr } = await admin.from("account_members").upsert(
+      { account_id: account.id, user_id: ownerId, role: "owner" },
+      { onConflict: "account_id,user_id", ignoreDuplicates: true },
+    );
+    if (memberErr) {
+      console.error("[api/admin/accounts] POST add owner:", memberErr);
+    }
+
+    // Se o dono ainda não tinha conta ativa, aponta para esta.
+    await admin
+      .from("profiles")
+      .update({ account_id: account.id, account_role: "owner" })
+      .eq("user_id", ownerId)
+      .is("account_id", null);
+
+    return NextResponse.json(
+      {
+        account: {
+          ...account,
+          ownerEmail,
+          members: 1,
+          channels: 0,
+          created_at: null,
+          isMember: false,
+        },
+        // Senha temporária mostrada UMA vez (só quando criamos o usuário).
+        tempPassword,
+      },
+      { status: 201 },
+    );
+  } catch (err) {
+    console.error("[api/admin/accounts] POST error:", err);
+    return NextResponse.json(
+      { error: "Falha ao criar a conta" },
       { status: 500 },
     );
   }

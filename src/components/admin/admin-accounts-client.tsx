@@ -2,11 +2,20 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { LogIn, LogOut } from "lucide-react";
+import { Copy, Loader2, LogIn, LogOut, Plus } from "lucide-react";
 
 import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Table,
   TableBody,
@@ -30,6 +39,7 @@ interface AdminAccount {
 
 // Estado editável por linha: o que está nos inputs + se está salvando.
 interface RowDraft {
+  name: string;
   maxChannels: string;
   maxUsers: string;
   saving: boolean;
@@ -51,6 +61,19 @@ export function AdminAccountsClient() {
   // Conta em que uma ação de entrar/sair está em curso (desabilita o botão).
   const [membershipBusy, setMembershipBusy] = useState<string | null>(null);
 
+  // Diálogo "Criar conta".
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newOwnerEmail, setNewOwnerEmail] = useState("");
+  const [newMaxChannels, setNewMaxChannels] = useState("2");
+  const [newMaxUsers, setNewMaxUsers] = useState("5");
+  const [creating, setCreating] = useState(false);
+  // Senha temporária do dono recém-criado, mostrada 1x após criar a conta.
+  const [tempPassword, setTempPassword] = useState<{
+    email: string;
+    password: string;
+  } | null>(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -68,6 +91,7 @@ export function AdminAccountsClient() {
       const seeded: Record<string, RowDraft> = {};
       for (const a of data.accounts) {
         seeded[a.id] = {
+          name: a.name,
           maxChannels: String(a.max_channels),
           maxUsers: String(a.max_users),
           saving: false,
@@ -87,7 +111,7 @@ export function AdminAccountsClient() {
 
   const setDraftField = (
     id: string,
-    field: "maxChannels" | "maxUsers",
+    field: "name" | "maxChannels" | "maxUsers",
     value: string,
   ) => {
     setDrafts((prev) => ({
@@ -100,9 +124,14 @@ export function AdminAccountsClient() {
     const draft = drafts[account.id];
     if (!draft) return;
 
+    const name = draft.name.trim();
     const maxChannels = Number(draft.maxChannels);
     const maxUsers = Number(draft.maxUsers);
 
+    if (!name) {
+      toast.error("O nome da conta não pode ficar vazio");
+      return;
+    }
     if (
       !Number.isInteger(maxChannels) ||
       maxChannels < 0 ||
@@ -124,6 +153,7 @@ export function AdminAccountsClient() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           accountId: account.id,
+          name,
           max_channels: maxChannels,
           max_users: maxUsers,
         }),
@@ -134,15 +164,15 @@ export function AdminAccountsClient() {
         } | null;
         throw new Error(body?.error ?? "Falha ao salvar");
       }
-      // Reflete os novos limites na tabela sem recarregar tudo.
+      // Reflete nome + limites na tabela sem recarregar tudo.
       setAccounts((prev) =>
         prev.map((a) =>
           a.id === account.id
-            ? { ...a, max_channels: maxChannels, max_users: maxUsers }
+            ? { ...a, name, max_channels: maxChannels, max_users: maxUsers }
             : a,
         ),
       );
-      toast.success(`Limites de "${account.name}" atualizados`);
+      toast.success(`Conta "${name}" atualizada`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Falha ao salvar");
     } finally {
@@ -187,6 +217,54 @@ export function AdminAccountsClient() {
     }
   };
 
+  const handleCreate = async () => {
+    const name = newName.trim();
+    const ownerEmail = newOwnerEmail.trim();
+    if (!name) {
+      toast.error("Digite o nome da conta.");
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ownerEmail)) {
+      toast.error("Digite um e-mail de dono válido.");
+      return;
+    }
+    setCreating(true);
+    try {
+      const res = await fetch("/api/admin/accounts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          ownerEmail,
+          max_channels: Number(newMaxChannels) || 0,
+          max_users: Number(newMaxUsers) || 0,
+        }),
+      });
+      const body = (await res.json().catch(() => null)) as {
+        error?: string;
+        tempPassword?: string | null;
+      } | null;
+      if (!res.ok) {
+        throw new Error(body?.error ?? "Falha ao criar a conta");
+      }
+      setCreateOpen(false);
+      setNewName("");
+      setNewOwnerEmail("");
+      setNewMaxChannels("2");
+      setNewMaxUsers("5");
+      // Se um usuário novo foi criado, mostra a senha temporária 1x.
+      if (body?.tempPassword) {
+        setTempPassword({ email: ownerEmail, password: body.tempPassword });
+      }
+      toast.success(`Conta "${name}" criada`);
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Falha ao criar a conta");
+    } finally {
+      setCreating(false);
+    }
+  };
+
   if (loading) {
     return (
       <p className="text-sm text-muted-foreground">Carregando contas…</p>
@@ -208,14 +286,21 @@ export function AdminAccountsClient() {
     );
   }
 
-  if (accounts.length === 0) {
-    return (
-      <p className="text-sm text-muted-foreground">Nenhuma conta encontrada.</p>
-    );
-  }
-
   return (
-    <div className="rounded-lg border border-border bg-card">
+    <div className="space-y-4">
+      <div className="flex justify-end">
+        <Button onClick={() => setCreateOpen(true)}>
+          <Plus className="size-4" />
+          Criar conta
+        </Button>
+      </div>
+
+      {accounts.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          Nenhuma conta encontrada.
+        </p>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-border bg-card">
       <Table>
         <TableHeader>
           <TableRow>
@@ -234,12 +319,19 @@ export function AdminAccountsClient() {
             const draft = drafts[a.id];
             const dirty =
               draft &&
-              (draft.maxChannels !== String(a.max_channels) ||
+              (draft.name.trim() !== a.name ||
+                draft.maxChannels !== String(a.max_channels) ||
                 draft.maxUsers !== String(a.max_users));
             return (
               <TableRow key={a.id}>
                 <TableCell className="font-medium text-foreground">
-                  {a.name}
+                  <Input
+                    value={draft?.name ?? ""}
+                    onChange={(e) => setDraftField(a.id, "name", e.target.value)}
+                    maxLength={80}
+                    className="h-8 min-w-40"
+                    aria-label={`Nome da conta ${a.name}`}
+                  />
                 </TableCell>
                 <TableCell className="text-muted-foreground">
                   {a.ownerEmail ?? "—"}
@@ -320,6 +412,136 @@ export function AdminAccountsClient() {
           })}
         </TableBody>
       </Table>
+        </div>
+      )}
+
+      {/* Diálogo: criar conta */}
+      <Dialog open={createOpen} onOpenChange={(o) => !creating && setCreateOpen(o)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Criar conta</DialogTitle>
+            <DialogDescription>
+              Cria um novo workspace e define o dono pelo e-mail. Se o e-mail
+              ainda não tiver login, criamos um e mostramos a senha temporária.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="new-account-name">Nome da conta</Label>
+              <Input
+                id="new-account-name"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder="Empresa do Cliente"
+                maxLength={80}
+                autoFocus
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="new-owner-email">E-mail do dono</Label>
+              <Input
+                id="new-owner-email"
+                type="email"
+                value={newOwnerEmail}
+                onChange={(e) => setNewOwnerEmail(e.target.value)}
+                placeholder="dono@empresa.com"
+              />
+            </div>
+            <div className="flex gap-3">
+              <div className="flex-1 space-y-1.5">
+                <Label htmlFor="new-max-channels">Limite de canais</Label>
+                <Input
+                  id="new-max-channels"
+                  type="number"
+                  min={0}
+                  value={newMaxChannels}
+                  onChange={(e) => setNewMaxChannels(e.target.value)}
+                />
+              </div>
+              <div className="flex-1 space-y-1.5">
+                <Label htmlFor="new-max-users">Limite de usuários</Label>
+                <Input
+                  id="new-max-users"
+                  type="number"
+                  min={0}
+                  value={newMaxUsers}
+                  onChange={(e) => setNewMaxUsers(e.target.value)}
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setCreateOpen(false)}
+              disabled={creating}
+            >
+              Cancelar
+            </Button>
+            <Button onClick={handleCreate} disabled={creating}>
+              {creating ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  Criando…
+                </>
+              ) : (
+                <>
+                  <Plus className="size-4" />
+                  Criar conta
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Diálogo: senha temporária do dono recém-criado (mostrada 1x) */}
+      <Dialog
+        open={tempPassword !== null}
+        onOpenChange={(o) => {
+          if (!o) setTempPassword(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Conta criada — senha temporária</DialogTitle>
+            <DialogDescription>
+              Repasse estes dados ao dono. A senha aparece só desta vez; ele
+              pode trocá-la depois no Perfil.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 rounded-lg border border-border bg-muted p-3 text-sm">
+            <p>
+              <span className="text-muted-foreground">E-mail: </span>
+              <span className="font-medium text-foreground">
+                {tempPassword?.email}
+              </span>
+            </p>
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground">Senha: </span>
+              <code className="rounded bg-background px-2 py-1 font-mono text-foreground">
+                {tempPassword?.password}
+              </code>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  if (tempPassword) {
+                    void navigator.clipboard?.writeText(tempPassword.password);
+                    toast.success("Senha copiada");
+                  }
+                }}
+              >
+                <Copy className="size-3.5" />
+                Copiar
+              </Button>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setTempPassword(null)}>Entendi</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
