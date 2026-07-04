@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
 import { useAuth } from '@/hooks/use-auth';
@@ -33,6 +33,33 @@ export default function SettingsPage() {
   // resolve onto their new home; unknown/empty → the Overview landing.
   const section = resolveSection(searchParams.get('tab'));
 
+  // Modelos (templates) são um recurso da API Oficial da Meta — sem conta
+  // Meta configurada, a seção não faz sentido e fica oculta. null = ainda
+  // carregando (não escondemos para não piscar).
+  const [metaConfigured, setMetaConfigured] = useState<boolean | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/whatsapp/config', { cache: 'no-store' });
+        if (!res.ok) {
+          if (!cancelled) setMetaConfigured(false);
+          return;
+        }
+        const data = (await res.json()) as { phone_number_id?: string } | null;
+        if (!cancelled) setMetaConfigured(Boolean(data?.phone_number_id));
+      } catch {
+        if (!cancelled) setMetaConfigured(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const hiddenSections: SettingsSection[] =
+    metaConfigured === false ? ['templates'] : [];
+
   const go = (next: SettingsSection) => {
     const params = new URLSearchParams(searchParams.toString());
     params.set('tab', next);
@@ -56,7 +83,28 @@ export default function SettingsPage() {
     security: <SecurityPanel />,
     appearance: <AppearancePanel />,
     whatsapp: <WhatsAppConfig />,
-    templates: <TemplateManager />,
+    templates:
+      metaConfigured === false ? (
+        <div className="max-w-xl rounded-lg border border-border bg-card p-6 text-center">
+          <p className="text-sm font-medium text-foreground">
+            Modelos exigem a API Oficial (Meta)
+          </p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Modelos de mensagem são aprovados pela Meta e só valem para a API
+            Oficial. Conecte uma conta Meta para usá-los. Nos canais por QR
+            Code, envie mensagens normalmente sem modelo.
+          </p>
+          <button
+            type="button"
+            onClick={() => go('whatsapp')}
+            className="mt-4 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+          >
+            Ir para Conexão do WhatsApp
+          </button>
+        </div>
+      ) : (
+        <TemplateManager />
+      ),
     fields: <FieldsAndTagsPanel />,
     deals: <DealsSettings />,
     members: <MembersTab />,
@@ -76,7 +124,12 @@ export default function SettingsPage() {
       </div>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[236px_minmax(0,1fr)] lg:items-start">
-        <SettingsRail active={section} onSelect={go} hints={hints} />
+        <SettingsRail
+          active={section}
+          onSelect={go}
+          hints={hints}
+          hidden={hiddenSections}
+        />
         <div className="min-w-0">{panel[section]}</div>
       </div>
     </div>

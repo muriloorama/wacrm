@@ -25,11 +25,15 @@ export function SettingsRail({
   active,
   onSelect,
   hints,
+  hidden,
 }: {
   active: SettingsSection;
   onSelect: (section: SettingsSection) => void;
   hints?: Partial<Record<SettingsSection, ReactNode>>;
+  /** Seções a ocultar do rail (ex.: "templates" sem conta Meta). */
+  hidden?: readonly SettingsSection[];
 }) {
+  const hiddenSet = new Set(hidden ?? []);
   const activeRef = useRef<HTMLButtonElement>(null);
 
   // When horizontal (mobile), keep the active chip in view. On desktop
@@ -55,8 +59,9 @@ export function SettingsRail({
     >
       {RAIL_GROUPS.map(({ label, group }) => {
         const items = SETTINGS_SECTIONS.filter(
-          (s) => SECTION_META[s].group === group,
+          (s) => SECTION_META[s].group === group && !hiddenSet.has(s),
         );
+        if (items.length === 0) return null;
         return (
           <div
             key={group}
