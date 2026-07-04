@@ -39,22 +39,32 @@ export function FollowupPanel() {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    let cancel = false;
-    (async () => {
-      if (!accountId) return;
-      const { data } = await supabase
-        .from("accounts")
-        .select("followup_enabled, followup_message, followup_hours")
-        .eq("id", accountId)
-        .maybeSingle();
-      if (cancel || !data) {
-        if (!cancel) setLoading(false);
-        return;
-      }
-      setEnabled(data.followup_enabled === true);
-      setMessage((data.followup_message as string | null) ?? "");
-      setHours(String(data.followup_hours ?? 24));
+    // Sem conta ativa ainda: não trava em "carregando" — libera os controles
+    // (o efeito re-roda quando accountId chega e recarrega os valores).
+    if (!accountId) {
       setLoading(false);
+      return;
+    }
+    let cancel = false;
+    setLoading(true);
+    (async () => {
+      try {
+        const { data } = await supabase
+          .from("accounts")
+          .select("followup_enabled, followup_message, followup_hours")
+          .eq("id", accountId)
+          .maybeSingle();
+        if (cancel) return;
+        if (data) {
+          setEnabled(data.followup_enabled === true);
+          setMessage((data.followup_message as string | null) ?? "");
+          setHours(String(data.followup_hours ?? 24));
+        }
+      } catch (e) {
+        console.error("[followup] load error:", e);
+      } finally {
+        if (!cancel) setLoading(false);
+      }
     })();
     return () => {
       cancel = true;

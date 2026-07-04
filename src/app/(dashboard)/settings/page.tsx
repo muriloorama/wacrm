@@ -17,6 +17,7 @@ import { DealsSettings } from '@/components/settings/deals-settings';
 import { FollowupPanel } from '@/components/settings/followup-panel';
 import { MembersTab } from '@/components/settings/members-tab';
 import { ApiKeysSettings } from '@/components/settings/api-keys-settings';
+import { SettingsPanelBoundary } from '@/components/settings/panel-boundary';
 import {
   resolveSection,
   type SettingsSection,
@@ -132,7 +133,11 @@ export default function SettingsPage() {
           hints={hints}
           hidden={hiddenSections}
         />
-        <div className="min-w-0">{panel[section]}</div>
+        <div className="min-w-0">
+          <SettingsPanelBoundary key={section}>
+            {panel[section]}
+          </SettingsPanelBoundary>
+        </div>
       </div>
     </div>
   );
