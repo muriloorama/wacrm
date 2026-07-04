@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { formatCurrency } from "@/lib/currency";
@@ -13,7 +12,7 @@ import {
   Copy,
   Check,
   Tag as TagIcon,
-  DollarSign,
+  Briefcase,
   StickyNote,
   Plus,
   X,
@@ -40,6 +39,10 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
   const { accountId } = useAuth();
   const [copied, setCopied] = useState(false);
   const [deals, setDeals] = useState<Deal[]>([]);
+  // Edição inline do valor de um negócio direto no painel.
+  const [editingDealId, setEditingDealId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
+  const [savingValue, setSavingValue] = useState(false);
   const [notes, setNotes] = useState<ContactNote[]>([]);
   const [tags, setTags] = useState<(Tag & { contact_tag_id: string })[]>([]);
   const [allTags, setAllTags] = useState<Tag[]>([]);
@@ -185,6 +188,30 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
     );
   }
 
+  const startEditValue = (deal: Deal) => {
+    setEditingDealId(deal.id);
+    setEditValue(deal.value != null ? String(deal.value) : "");
+  };
+
+  const saveDealValue = async (dealId: string) => {
+    const parsed = parseFloat(editValue.replace(",", ".")) || 0;
+    setSavingValue(true);
+    const supabase = createClient();
+    const { error } = await supabase
+      .from("deals")
+      .update({ value: parsed })
+      .eq("id", dealId);
+    setSavingValue(false);
+    if (error) {
+      toast.error("Falha ao salvar o valor");
+      return;
+    }
+    setDeals((prev) =>
+      prev.map((d) => (d.id === dealId ? { ...d, value: parsed } : d)),
+    );
+    setEditingDealId(null);
+  };
+
   const displayName = contact.name || contact.phone;
   const initials = displayName.charAt(0).toUpperCase();
 
@@ -322,7 +349,7 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
           {/* Active Deals */}
           <div>
             <div className="flex items-center gap-2 px-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              <DollarSign className="h-3 w-3" />
+              <Briefcase className="h-3 w-3" />
               Negócios ativos
             </div>
             <div className="mt-2 space-y-2">
@@ -330,22 +357,41 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
                 <p className="px-1 text-xs text-muted-foreground">Nenhum negócio</p>
               ) : (
                 deals.map((deal) => (
-                  <Link
+                  <div
                     key={deal.id}
-                    href="/pipelines"
-                    title="Abrir no funil para editar o valor"
-                    className="block rounded-lg bg-muted px-3 py-2 transition-colors hover:bg-muted/70"
+                    className="rounded-lg bg-muted px-3 py-2"
                   >
                     <p className="text-sm font-medium text-foreground">
                       {deal.title}
                     </p>
-                    <div className="mt-1 flex items-center justify-between text-xs text-muted-foreground">
-                      <span>
-                        {formatCurrency(deal.value, deal.currency)}
-                      </span>
+                    <div className="mt-1 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                      {editingDealId === deal.id ? (
+                        <input
+                          type="number"
+                          autoFocus
+                          value={editValue}
+                          disabled={savingValue}
+                          onChange={(e) => setEditValue(e.target.value)}
+                          onBlur={() => saveDealValue(deal.id)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") saveDealValue(deal.id);
+                            if (e.key === "Escape") setEditingDealId(null);
+                          }}
+                          className="h-6 w-24 rounded border border-border bg-background px-1.5 text-xs text-foreground outline-none focus:border-primary"
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => startEditValue(deal)}
+                          title="Clique para editar o valor"
+                          className="rounded font-medium text-foreground hover:underline"
+                        >
+                          {formatCurrency(deal.value, deal.currency)}
+                        </button>
+                      )}
                       {deal.stage && (
                         <span
-                          className="rounded-full px-1.5 py-0.5 text-[10px]"
+                          className="shrink-0 rounded-full px-1.5 py-0.5 text-[10px]"
                           style={{
                             backgroundColor: `${deal.stage.color}20`,
                             color: deal.stage.color,
@@ -355,7 +401,7 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
                         </span>
                       )}
                     </div>
-                  </Link>
+                  </div>
                 ))
               )}
             </div>
