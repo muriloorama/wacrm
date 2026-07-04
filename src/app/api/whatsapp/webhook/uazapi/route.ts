@@ -89,10 +89,20 @@ export async function POST(request: Request) {
     return NextResponse.json({ status: "ignored" }, { status: 200 });
   }
 
+  // Dica de canal via query (?ch=<channel_id>): usada pelos canais MIGRADOS,
+  // cujo webhook é configurado com o id do canal na URL — resolução 100%
+  // determinística, sem depender do nome/id que o uazapi mande no corpo.
+  let channelHint: string | null = null;
+  try {
+    channelHint = new URL(request.url).searchParams.get("ch");
+  } catch {
+    // URL inesperada — segue sem a dica.
+  }
+
   // Todo o processamento é resiliente: qualquer erro é logado e engolido
   // para garantirmos o 200 abaixo.
   try {
-    await processWebhook(body);
+    await processWebhook(body, channelHint);
   } catch (error) {
     console.error("[uazapi-webhook] erro ao processar:", error);
   }
@@ -100,7 +110,10 @@ export async function POST(request: Request) {
   return NextResponse.json({ status: "received" }, { status: 200 });
 }
 
-async function processWebhook(body: UazapiWebhookBody) {
+async function processWebhook(
+  body: UazapiWebhookBody,
+  channelHint: string | null = null,
+) {
   const event = body.EventType ?? body.event;
   const data = body.message ?? body.data;
   const instanceName = body.instanceName ?? body.instance ?? "";
@@ -133,7 +146,17 @@ async function processWebhook(body: UazapiWebhookBody) {
   const CHANNEL_COLS = "id, account_id, created_by, uazapi_instance_token";
   let channel: ChannelRow | null = null;
 
-  if (instanceName.startsWith("channel-")) {
+  // 0) Dica explícita via ?ch=<id> (canais migrados). Tem prioridade máxima.
+  if (channelHint) {
+    const { data: byHint } = await db
+      .from("whatsapp_channels")
+      .select(CHANNEL_COLS)
+      .eq("id", channelHint)
+      .maybeSingle();
+    channel = (byHint as ChannelRow) ?? null;
+  }
+
+  if (!channel && instanceName.startsWith("channel-")) {
     const channelId = instanceName.slice("channel-".length);
     const { data: byId } = await db
       .from("whatsapp_channels")
@@ -141,7 +164,8 @@ async function processWebhook(body: UazapiWebhookBody) {
       .eq("id", channelId)
       .maybeSingle();
     channel = (byId as ChannelRow) ?? null;
-  } else if (instanceName.startsWith("account-")) {
+  }
+  if (!channel && instanceName.startsWith("account-")) {
     const accountId = instanceName.slice("account-".length);
     const { data: byAccount } = await db
       .from("whatsapp_channels")
