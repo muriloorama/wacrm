@@ -71,7 +71,7 @@ function SignupPageInner() {
       ? `${window.location.origin}/join/${encodeURIComponent(inviteToken)}`
       : undefined;
 
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
@@ -85,6 +85,17 @@ function SignupPageInner() {
     if (error) {
       setError(translateAuthError(error.message));
       setLoading(false);
+      return;
+    }
+
+    // Com a confirmação de e-mail DESATIVADA, o signUp já devolve uma sessão
+    // (usuário logado na hora). Segue direto: com convite, para a página de
+    // aceite; sem convite, para o painel. A tela "verifique seu e-mail"
+    // abaixo é só fallback para quando a confirmação estiver ligada.
+    if (data.session) {
+      window.location.href = inviteToken
+        ? `/join/${encodeURIComponent(inviteToken)}`
+        : "/dashboard";
       return;
     }
 

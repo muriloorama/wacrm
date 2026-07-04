@@ -42,6 +42,12 @@ import { cn } from '@/lib/utils';
 
 type InviteRole = 'admin' | 'agent' | 'viewer';
 
+const ROLE_PT: Record<InviteRole, string> = {
+  admin: 'Administrador',
+  agent: 'Agente',
+  viewer: 'Visualizador',
+};
+
 interface InviteMemberDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -197,11 +203,14 @@ export function InviteMemberDialog({
                 Convite criado
               </DialogTitle>
               <DialogDescription className="text-muted-foreground">
-                Compartilhe este link com seu novo colega. Ele poderá se
-                cadastrar (ou entrar) e ingressar na conta como{' '}
-                <span className="font-medium text-muted-foreground">{result.role}</span>
-                . O link é válido por{' '}
-                <span className="font-medium text-muted-foreground">
+                Envie este link para a pessoa. Ao abrir, ela cria o acesso (ou
+                entra, se já tiver conta) e já entra na conta como{' '}
+                <span className="font-medium text-foreground">
+                  {ROLE_PT[result.role]}
+                </span>
+                {' '}— sem precisar confirmar e-mail. O link é de uso único e
+                vale por{' '}
+                <span className="font-medium text-foreground">
                   {result.expiresInDays} dia{result.expiresInDays === 1 ? '' : 's'}
                 </span>
                 .
@@ -298,6 +307,7 @@ export function InviteMemberDialog({
                 <Select
                   value={role}
                   onValueChange={(v) => v && setRole(v as InviteRole)}
+                  items={ROLE_PT}
                 >
                   <SelectTrigger className="w-full bg-muted border-border text-foreground">
                     <SelectValue />
@@ -318,6 +328,9 @@ export function InviteMemberDialog({
                 <Select
                   value={expiry}
                   onValueChange={(v) => v && setExpiry(v)}
+                  items={Object.fromEntries(
+                    EXPIRY_OPTIONS.map((o) => [o.value, o.label]),
+                  )}
                 >
                   <SelectTrigger className="w-full bg-muted border-border text-foreground">
                     <SelectValue />
