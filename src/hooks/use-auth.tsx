@@ -46,6 +46,9 @@ interface AccountSummary {
   /** Default deal currency (ISO-4217). NOT NULL DEFAULT 'USD' in the
    *  DB (migration 021); narrowed to DEFAULT_CURRENCY when absent. */
   default_currency: string;
+  /** Logo white-label (fundo claro / fundo escuro). null = usa o padrão. */
+  logo_light_url: string | null;
+  logo_dark_url: string | null;
 }
 
 interface AuthContextValue {
@@ -181,9 +184,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (data.account_id) {
           const { data: account, error: accountErr } = await supabase
             .from("accounts")
-            // default_currency added in migration 021; narrowed to the
-            // USD fallback below for older schemas where it reads null.
-            .select("id, name, default_currency")
+            // default_currency added in migration 021; logos in 038.
+            .select("id, name, default_currency, logo_light_url, logo_dark_url")
             .eq("id", data.account_id)
             .maybeSingle();
           if (accountErr) {
@@ -198,6 +200,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               id: account.id,
               name: account.name,
               default_currency: account.default_currency ?? DEFAULT_CURRENCY,
+              logo_light_url: (account.logo_light_url as string) ?? null,
+              logo_dark_url: (account.logo_dark_url as string) ?? null,
             };
           }
         }
@@ -217,7 +221,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // apenas mostra a conta ativa.
         const { data: memberRows, error: membersErr } = await supabase
           .from("account_members")
-          .select("account:accounts(id, name, default_currency)")
+          .select(
+            "account:accounts(id, name, default_currency, logo_light_url, logo_dark_url)",
+          )
           .eq("user_id", userId);
         if (membersErr) {
           console.error("[AuthProvider] fetchAccounts error:", membersErr.message);
@@ -231,6 +237,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                     name: (a.name as string) ?? "Conta",
                     default_currency:
                       (a.default_currency as string) ?? DEFAULT_CURRENCY,
+                    logo_light_url:
+                      (a.logo_light_url as string | null) ?? null,
+                    logo_dark_url: (a.logo_dark_url as string | null) ?? null,
                   }
                 : null;
             })

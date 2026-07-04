@@ -239,7 +239,11 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
               collapsed && "lg:hidden",
             )}
           >
-            <BrandLogo className="h-8" />
+            <BrandLogo
+              className="h-8"
+              lightSrc={account?.logo_light_url}
+              darkSrc={account?.logo_dark_url}
+            />
           </Link>
           {/* Botão recolher/expandir — só no desktop (lg+). No mobile o
               controle é o hambúrguer do Header. */}

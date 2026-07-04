@@ -53,27 +53,55 @@ export async function PATCH(request: Request) {
     if (!limit.success) return rateLimitResponse(limit);
 
     const body = (await request.json().catch(() => null)) as
-      | { name?: unknown }
+      | {
+          name?: unknown;
+          logo_light_url?: unknown;
+          logo_dark_url?: unknown;
+        }
       | null;
-    const rawName = body?.name;
 
-    if (typeof rawName !== "string") {
-      return NextResponse.json(
-        { error: "'name' must be a string" },
-        { status: 400 },
-      );
+    const update: Record<string, string | null> = {};
+
+    // Nome (opcional).
+    if (body?.name !== undefined) {
+      if (typeof body.name !== "string") {
+        return NextResponse.json(
+          { error: "'name' must be a string" },
+          { status: 400 },
+        );
+      }
+      const name = body.name.trim();
+      if (name.length === 0) {
+        return NextResponse.json(
+          { error: "Account name cannot be empty" },
+          { status: 400 },
+        );
+      }
+      if (name.length > MAX_NAME_LEN) {
+        return NextResponse.json(
+          { error: `Account name must be ${MAX_NAME_LEN} characters or fewer` },
+          { status: 400 },
+        );
+      }
+      update.name = name;
     }
 
-    const name = rawName.trim();
-    if (name.length === 0) {
-      return NextResponse.json(
-        { error: "Account name cannot be empty" },
-        { status: 400 },
-      );
+    // Logos white-label (opcionais). String = define; null = volta ao padrão.
+    for (const key of ["logo_light_url", "logo_dark_url"] as const) {
+      const v = body?.[key];
+      if (v === undefined) continue;
+      if (v !== null && typeof v !== "string") {
+        return NextResponse.json(
+          { error: `'${key}' must be a string or null` },
+          { status: 400 },
+        );
+      }
+      update[key] = v === "" ? null : (v as string | null);
     }
-    if (name.length > MAX_NAME_LEN) {
+
+    if (Object.keys(update).length === 0) {
       return NextResponse.json(
-        { error: `Account name must be ${MAX_NAME_LEN} characters or fewer` },
+        { error: "Nada para atualizar" },
         { status: 400 },
       );
     }
@@ -83,9 +111,9 @@ export async function PATCH(request: Request) {
     // guaranteed the caller is admin+.
     const { data, error } = await ctx.supabase
       .from("accounts")
-      .update({ name })
+      .update(update)
       .eq("id", ctx.accountId)
-      .select("id, name")
+      .select("id, name, logo_light_url, logo_dark_url")
       .single();
 
     if (error) {
