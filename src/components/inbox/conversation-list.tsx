@@ -106,6 +106,14 @@ const FILTER_OPTIONS: { label: string; value: InboxFilter }[] = [
   { label: "Arquivadas", value: "archived" },
 ];
 
+// Ordenação da lista de conversas.
+type SortBy = "recent" | "oldest" | "created";
+const SORT_OPTIONS: { label: string; value: SortBy }[] = [
+  { label: "Mais recentes", value: "recent" },
+  { label: "Mais antigas", value: "oldest" },
+  { label: "Criado primeiro", value: "created" },
+];
+
 export function ConversationList({
   activeConversationId,
   onSelect,
@@ -115,6 +123,7 @@ export function ConversationList({
 }: ConversationListProps) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<InboxFilter>("all");
+  const [sortBy, setSortBy] = useState<SortBy>("recent");
   const [loading, setLoading] = useState(true);
   // Contact-based filters (issue #272). Tags use OR logic (a conversation
   // matches if its contact carries any selected tag), consistent with
@@ -397,9 +406,17 @@ export function ConversationList({
       });
     }
 
-    // Conversas fixadas sobem para o topo (estilo WhatsApp). `result` já vem
-    // ordenado por `last_message_at DESC`; um sort estável por "fixada?" mantém
-    // a ordem relativa dentro de cada grupo (fixadas e não-fixadas).
+    // Ordenação escolhida (mais recentes / mais antigas / criado primeiro).
+    const ts = (v?: string) => (v ? new Date(v).getTime() : 0);
+    result = [...result].sort((a, b) => {
+      if (sortBy === "created") return ts(a.created_at) - ts(b.created_at);
+      const at = ts(a.last_message_at);
+      const bt = ts(b.last_message_at);
+      return sortBy === "oldest" ? at - bt : bt - at;
+    });
+
+    // Conversas fixadas sobem para o topo (estilo WhatsApp). O sort estável
+    // por "fixada?" mantém a ordem escolhida dentro de cada grupo.
     const isPinned = (c: Conversation) =>
       pinnedOverrides[c.id] ?? Boolean(c.pinned_at);
     result = [...result].sort(
@@ -415,6 +432,7 @@ export function ConversationList({
     selectedCompany,
     selectedChannelId,
     selectedOrigem,
+    sortBy,
     pipelineContactIds,
     archivedOverrides,
     pinnedOverrides,
@@ -687,6 +705,31 @@ export function ConversationList({
                     filter === opt.value
                       ? "text-primary"
                       : "text-popover-foreground"
+                  )}
+                >
+                  {opt.label}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          {/* Ordenação: mais recentes / mais antigas / criado primeiro */}
+          <DropdownMenu>
+            <DropdownMenuTrigger className="inline-flex items-center justify-center h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground rounded-md hover:bg-muted">
+              {SORT_OPTIONS.find((s) => s.value === sortBy)?.label ??
+                "Ordenar"}
+              <ChevronDown className="h-3 w-3" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="border-border bg-popover">
+              {SORT_OPTIONS.map((opt) => (
+                <DropdownMenuItem
+                  key={opt.value}
+                  onClick={() => setSortBy(opt.value)}
+                  className={cn(
+                    "text-sm",
+                    sortBy === opt.value
+                      ? "text-primary"
+                      : "text-popover-foreground",
                   )}
                 >
                   {opt.label}
