@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import dynamic from 'next/dynamic';
 
 import { useAuth } from '@/hooks/use-auth';
 import { useTheme } from '@/hooks/use-theme';
@@ -14,7 +15,6 @@ import { WhatsAppConfig } from '@/components/settings/whatsapp-config';
 import { TemplateManager } from '@/components/settings/template-manager';
 import { FieldsAndTagsPanel } from '@/components/settings/fields-and-tags-panel';
 import { DealsSettings } from '@/components/settings/deals-settings';
-import { FollowupPanel } from '@/components/settings/followup-panel';
 import { MembersTab } from '@/components/settings/members-tab';
 import { ApiKeysSettings } from '@/components/settings/api-keys-settings';
 import { SettingsPanelBoundary } from '@/components/settings/panel-boundary';
@@ -22,6 +22,19 @@ import {
   resolveSection,
   type SettingsSection,
 } from '@/components/settings/settings-sections';
+
+// Carregado só no cliente (ssr: false): elimina qualquer descompasso de
+// hidratação vindo deste painel e o isola em seu próprio chunk.
+const FollowupPanel = dynamic(
+  () =>
+    import('@/components/settings/followup-panel').then((m) => m.FollowupPanel),
+  {
+    ssr: false,
+    loading: () => (
+      <p className="text-sm text-muted-foreground">Carregando…</p>
+    ),
+  },
+);
 
 export default function SettingsPage() {
   const router = useRouter();
