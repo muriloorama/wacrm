@@ -13,6 +13,7 @@ import type { Conversation, ConversationStatus, Tag } from "@/types";
 import {
   Search,
   ChevronDown,
+  SlidersHorizontal,
   X,
   Image as ImageIcon,
   Mic,
@@ -133,6 +134,8 @@ export function ConversationList({
   const [filter, setFilter] = useState<InboxFilter>("all");
   const [sortBy, setSortBy] = useState<SortBy>("recent");
   const [groupFilter, setGroupFilter] = useState<GroupFilter>("all");
+  // Seletores de canal/funil/origem recolhidos por padrão (nem sempre usados).
+  const [showFilters, setShowFilters] = useState(false);
   const [loading, setLoading] = useState(true);
   // Contact-based filters (issue #272). Tags use OR logic (a conversation
   // matches if its contact carries any selected tag), consistent with
@@ -606,6 +609,31 @@ export function ConversationList({
     <div className="flex h-full w-full flex-col border-r border-border bg-card lg:w-80">
       {/* Search + Filter */}
       <div className="space-y-2 border-b border-border p-3">
+        {/* Botão recolher/expandir os seletores avançados (canal/funil/origem)
+            — recolhidos por padrão, já que nem sempre são usados. */}
+        {(channels.length > 1 ||
+          pipelines.length > 0 ||
+          (account?.origens.length ?? 0) > 0) && (
+          <button
+            type="button"
+            onClick={() => setShowFilters((v) => !v)}
+            className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <span className="flex items-center gap-1.5">
+              <SlidersHorizontal className="size-3.5" />
+              Filtros
+            </span>
+            <ChevronDown
+              className={cn(
+                "size-3.5 transition-transform",
+                showFilters && "rotate-180",
+              )}
+            />
+          </button>
+        )}
+
+        {showFilters && (
+          <>
         {/* Seletor de caixa de entrada por canal. Só aparece quando há mais
             de um canal — com um único canal, filtrar não faz diferença. */}
         {channels.length > 1 && (
@@ -692,6 +720,8 @@ export function ConversationList({
               ))}
             </SelectContent>
           </Select>
+        )}
+          </>
         )}
 
         <div className="relative">
