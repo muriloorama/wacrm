@@ -247,8 +247,18 @@ export async function GET(request: Request) {
           connected = status.status?.connected ?? false;
           qrcode = status.instance?.qrcode || undefined;
           paircode = status.instance?.paircode || undefined;
-          if (connected && status.status?.jid?.user) {
-            phone = status.status.jid.user;
+          // Número conectado: `instance.owner` já vem limpo ("5511…"). O
+          // `status.jid` é uma STRING ("5511…:1@s.whatsapp.net") — usada só
+          // como fallback, extraindo os dígitos antes do ':'/'@'. (O código
+          // antigo lia `jid.user` como objeto, que não existe → phone ficava
+          // sempre null e o número nunca aparecia no card do canal.)
+          if (connected) {
+            const owner = status.instance?.owner?.trim();
+            const jidDigits = status.status?.jid
+              ? status.status.jid.split(/[:@]/)[0]
+              : "";
+            const resolved = owner || jidDigits;
+            if (resolved) phone = resolved;
           }
 
           const nextStatus = connected ? "connected" : "disconnected";

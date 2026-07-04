@@ -118,8 +118,19 @@ export async function deleteInstance(token: string): Promise<void> {
 // ---------- Conexão / status (instância) ----------
 
 export interface UazapiStatus {
-  instance: { id: string; name: string; status: string; qrcode?: string; paircode?: string };
-  status: { connected: boolean; loggedIn: boolean; jid?: { user: string; server: string } };
+  instance: {
+    id: string;
+    name: string;
+    status: string;
+    qrcode?: string;
+    paircode?: string;
+    /** Número conectado, só dígitos (ex.: "5511955815832"). */
+    owner?: string;
+    profileName?: string;
+  };
+  // ATENÇÃO: `jid` vem como STRING (ex.: "5511955815832:1@s.whatsapp.net"),
+  // NÃO como objeto. Para o número limpo prefira `instance.owner`.
+  status: { connected: boolean; loggedIn: boolean; jid?: string };
 }
 
 /**
