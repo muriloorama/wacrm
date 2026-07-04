@@ -5,6 +5,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { CURRENCIES } from "@/lib/currency";
+import { OrigemSelect } from "@/components/inbox/origem-select";
 import type {
   Contact,
   Conversation,
@@ -35,7 +36,6 @@ import {
   X,
   Trash2,
   MessageSquare,
-  DollarSign,
   Loader2,
   Tag as TagIcon,
   Plus,
@@ -376,17 +376,34 @@ export function DealForm({
               )}
             </div>
 
+            {/* Origem do lead (do contato selecionado). */}
+            {contactId && (
+              <div className="grid gap-2">
+                <Label className="text-muted-foreground">Origem</Label>
+                <OrigemSelect
+                  key={contactId}
+                  contactId={contactId}
+                  value={
+                    contacts.find((c) => c.id === contactId)?.origem ?? null
+                  }
+                />
+              </div>
+            )}
+
             <div className="grid grid-cols-[1fr_110px] gap-3">
               <div className="grid gap-2">
                 <Label className="text-muted-foreground">Valor</Label>
                 <div className="relative">
-                  <DollarSign className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-sm font-medium text-muted-foreground">
+                    {CURRENCIES.find((c) => c.code === currency)?.symbol ??
+                      currency}
+                  </span>
                   <Input
                     type="number"
                     value={value}
                     onChange={(e) => setValue(e.target.value)}
                     placeholder="0"
-                    className="border-border bg-muted pl-7 text-foreground"
+                    className="border-border bg-muted pl-10 text-foreground"
                   />
                 </div>
               </div>
@@ -539,31 +556,33 @@ export function DealForm({
                 <div className="flex gap-2">
                   <Button
                     type="button"
+                    size="sm"
                     onClick={() => handleStatusChange("won")}
                     disabled={!!statusAction || deal.status === "won"}
-                    className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                    className="flex-1 bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
                   >
                     {statusAction === "won" ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <Loader2 className="size-3.5 animate-spin" />
                     ) : (
                       <>
-                        <Check className="mr-1 h-4 w-4" />
-                        Marcar como Ganho
+                        <Check className="size-3.5" />
+                        Ganho
                       </>
                     )}
                   </Button>
                   <Button
                     type="button"
+                    size="sm"
                     onClick={() => handleStatusChange("lost")}
                     disabled={!!statusAction || deal.status === "lost"}
                     className="flex-1 bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
                   >
                     {statusAction === "lost" ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <Loader2 className="size-3.5 animate-spin" />
                     ) : (
                       <>
-                        <X className="mr-1 h-4 w-4" />
-                        Marcar como Perdido
+                        <X className="size-3.5" />
+                        Perdido
                       </>
                     )}
                   </Button>
@@ -572,6 +591,7 @@ export function DealForm({
                   <Button
                     type="button"
                     variant="ghost"
+                    size="sm"
                     onClick={() => handleStatusChange("open")}
                     disabled={!!statusAction}
                     className="w-full text-muted-foreground hover:text-foreground"

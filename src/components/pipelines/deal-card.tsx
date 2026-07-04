@@ -3,6 +3,7 @@
 import type { Deal, PipelineStage } from "@/types";
 import { Calendar, Check, X } from "lucide-react";
 import { formatCurrency } from "@/lib/currency";
+import { useAuth } from "@/hooks/use-auth";
 
 interface DealCardProps {
   deal: Deal;
@@ -26,8 +27,14 @@ function initials(name?: string, fallback?: string) {
 }
 
 export function DealCard({ deal, stage, onEdit, isOverlay }: DealCardProps) {
+  const { account } = useAuth();
   const contactLabel = deal.contact?.name || deal.contact?.phone || "Sem contato";
   const assigneeLabel = deal.assignee?.full_name || null;
+  // Origem do lead (do contato), resolvida na config de origens da conta.
+  const origem =
+    deal.contact?.origem
+      ? account?.origens.find((o) => o.id === deal.contact?.origem) ?? null
+      : null;
 
   return (
     <button
@@ -77,6 +84,25 @@ export function DealCard({ deal, stage, onEdit, isOverlay }: DealCardProps) {
         </span>
         <span className="truncate text-xs text-muted-foreground">{contactLabel}</span>
       </div>
+
+      {/* Origem do lead */}
+      {origem && (
+        <div className="mt-2">
+          <span
+            className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
+            style={{
+              backgroundColor: `${origem.color}22`,
+              color: origem.color,
+            }}
+          >
+            <span
+              className="size-1.5 rounded-full"
+              style={{ backgroundColor: origem.color }}
+            />
+            {origem.label}
+          </span>
+        </div>
+      )}
 
       <div className="mt-2 flex items-center justify-between">
         <span className="text-sm font-bold text-primary">
