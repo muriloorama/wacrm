@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
-import type { Pipeline, PipelineStage, Deal } from "@/types";
+import type { Pipeline, PipelineStage, Deal, Tag } from "@/types";
 import { PipelineBoard } from "@/components/pipelines/pipeline-board";
 import { PipelineSettings } from "@/components/pipelines/pipeline-settings";
 import { DealForm } from "@/components/pipelines/deal-form";
@@ -99,14 +99,46 @@ export default function PipelinesPage() {
     async (pipelineId: string) => {
       const { data } = await supabase
         .from("deals")
-        // `tags(*)` embeda as etiquetas do contato pela junção contact_tags
-        // (many-to-many) — usado para mostrar os chips coloridos no card.
-        .select(
-          "*, contact:contacts(*, tags(*)), assignee:profiles!deals_assigned_to_fkey(*)",
-        )
+        .select("*, contact:contacts(*), assignee:profiles!deals_assigned_to_fkey(*)")
         .eq("pipeline_id", pipelineId)
         .order("created_at", { ascending: false });
-      return (data ?? []) as Deal[];
+      const deals = (data ?? []) as Deal[];
+
+      // Hidrata as etiquetas de cada contato numa query separada, pela junção
+      // contact_tags (mesmo padrão usado no inbox). Fazer isso via embed
+      // `contacts(*, tags(*))` na query acima quebrava a consulta inteira e
+      // sumia com TODOS os cards — por isso é feito em passo apartado.
+      const contactIds = [
+        ...new Set(
+          deals.map((d) => d.contact_id).filter((id): id is string => !!id),
+        ),
+      ];
+      if (contactIds.length > 0) {
+        const { data: ctRows } = await supabase
+          .from("contact_tags")
+          .select("contact_id, tags(*)")
+          .in("contact_id", contactIds);
+        const byContact = new Map<string, Tag[]>();
+        const rows = (ctRows ?? []) as unknown as {
+          contact_id: string;
+          tags: Tag | Tag[] | null;
+        }[];
+        for (const r of rows) {
+          // Dependendo da inferência do PostgREST, `tags` vem como objeto ou
+          // array de um item — normaliza para o objeto Tag.
+          const tag = Array.isArray(r.tags) ? r.tags[0] : r.tags;
+          if (!tag) continue;
+          const arr = byContact.get(r.contact_id) ?? [];
+          arr.push(tag);
+          byContact.set(r.contact_id, arr);
+        }
+        for (const d of deals) {
+          if (d.contact && d.contact_id) {
+            d.contact.tags = byContact.get(d.contact_id) ?? [];
+          }
+        }
+      }
+      return deals;
     },
     [supabase],
   );
