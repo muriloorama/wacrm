@@ -114,6 +114,14 @@ const SORT_OPTIONS: { label: string; value: SortBy }[] = [
   { label: "Criado primeiro", value: "created" },
 ];
 
+// Filtro grupo x individual.
+type GroupFilter = "all" | "groups" | "direct";
+const GROUP_OPTIONS: { label: string; value: GroupFilter }[] = [
+  { label: "Todos os tipos", value: "all" },
+  { label: "Só grupos", value: "groups" },
+  { label: "Só individuais", value: "direct" },
+];
+
 export function ConversationList({
   activeConversationId,
   onSelect,
@@ -124,6 +132,7 @@ export function ConversationList({
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<InboxFilter>("all");
   const [sortBy, setSortBy] = useState<SortBy>("recent");
+  const [groupFilter, setGroupFilter] = useState<GroupFilter>("all");
   const [loading, setLoading] = useState(true);
   // Contact-based filters (issue #272). Tags use OR logic (a conversation
   // matches if its contact carries any selected tag), consistent with
@@ -386,6 +395,14 @@ export function ConversationList({
       result = result.filter((c) => c.contact?.origem === selectedOrigem);
     }
 
+    // Filtro grupo x individual.
+    if (groupFilter !== "all") {
+      const wantGroup = groupFilter === "groups";
+      result = result.filter(
+        (c) => (c.contact?.is_group === true) === wantGroup,
+      );
+    }
+
     // Contact-based filters (tags via OR logic, exact company match).
     if (selectedTagIds.length > 0 || selectedCompany !== null) {
       result = result.filter((c) =>
@@ -433,6 +450,7 @@ export function ConversationList({
     selectedChannelId,
     selectedOrigem,
     sortBy,
+    groupFilter,
     pipelineContactIds,
     archivedOverrides,
     pinnedOverrides,
@@ -728,6 +746,31 @@ export function ConversationList({
                   className={cn(
                     "text-sm",
                     sortBy === opt.value
+                      ? "text-primary"
+                      : "text-popover-foreground",
+                  )}
+                >
+                  {opt.label}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          {/* Filtro grupo x individual */}
+          <DropdownMenu>
+            <DropdownMenuTrigger className="inline-flex items-center justify-center h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground rounded-md hover:bg-muted">
+              {GROUP_OPTIONS.find((g) => g.value === groupFilter)?.label ??
+                "Tipo"}
+              <ChevronDown className="h-3 w-3" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="border-border bg-popover">
+              {GROUP_OPTIONS.map((opt) => (
+                <DropdownMenuItem
+                  key={opt.value}
+                  onClick={() => setGroupFilter(opt.value)}
+                  className={cn(
+                    "text-sm",
+                    groupFilter === opt.value
                       ? "text-primary"
                       : "text-popover-foreground",
                   )}
