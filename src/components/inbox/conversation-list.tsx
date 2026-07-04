@@ -21,6 +21,8 @@ import {
   Check,
   Archive,
   ArchiveRestore,
+  Pin,
+  PinOff,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -142,6 +144,12 @@ export function ConversationList({
   // menu de contexto (botão direito). Chave = conversation_id → arquivada?
   // Sobrepõem `conversation.archived` para refletir na hora, sem refetch.
   const [archivedOverrides, setArchivedOverrides] = useState<
+    Record<string, boolean>
+  >({});
+  // Overrides otimistas do estado "fixada" das conversas, alterados pelo menu
+  // de contexto. Chave = conversation_id → fixada? Sobrepõem `pinned_at` para
+  // refletir na hora e reordenar (fixadas no topo) sem esperar refetch/realtime.
+  const [pinnedOverrides, setPinnedOverrides] = useState<
     Record<string, boolean>
   >({});
 
@@ -379,6 +387,15 @@ export function ConversationList({
       });
     }
 
+    // Conversas fixadas sobem para o topo (estilo WhatsApp). `result` já vem
+    // ordenado por `last_message_at DESC`; um sort estável por "fixada?" mantém
+    // a ordem relativa dentro de cada grupo (fixadas e não-fixadas).
+    const isPinned = (c: Conversation) =>
+      pinnedOverrides[c.id] ?? Boolean(c.pinned_at);
+    result = [...result].sort(
+      (a, b) => Number(isPinned(b)) - Number(isPinned(a)),
+    );
+
     return result;
   }, [
     conversations,
@@ -389,6 +406,7 @@ export function ConversationList({
     selectedChannelId,
     pipelineContactIds,
     archivedOverrides,
+    pinnedOverrides,
   ]);
 
   const toggleTag = useCallback((id: string) => {
@@ -473,6 +491,38 @@ export function ConversationList({
           nextArchived
             ? "Falha ao arquivar conversa"
             : "Falha ao desarquivar conversa",
+        );
+      }
+    },
+    [],
+  );
+
+  /**
+   * Fixa/desafixa uma conversa (menu de contexto na lista). Grava `pinned_at`
+   * (timestamp ao fixar, null ao desafixar) e atualiza o override otimista
+   * para subir/descer a conversa na hora. Pin é por conta (igual arquivar).
+   */
+  const togglePinned = useCallback(
+    async (conversationId: string, nextPinned: boolean) => {
+      const supabase = createClient();
+      // Otimista: reflete já, reverte no erro.
+      setPinnedOverrides((prev) => ({
+        ...prev,
+        [conversationId]: nextPinned,
+      }));
+
+      const { error } = await supabase
+        .from("conversations")
+        .update({ pinned_at: nextPinned ? new Date().toISOString() : null })
+        .eq("id", conversationId);
+
+      if (error) {
+        setPinnedOverrides((prev) => ({
+          ...prev,
+          [conversationId]: !nextPinned,
+        }));
+        toast.error(
+          nextPinned ? "Falha ao fixar conversa" : "Falha ao desafixar conversa",
         );
       }
     },
@@ -754,6 +804,10 @@ export function ConversationList({
                   archivedOverrides[conv.id] ?? conv.archived ?? false
                 }
                 onToggleArchived={toggleArchived}
+                isPinned={
+                  pinnedOverrides[conv.id] ?? Boolean(conv.pinned_at)
+                }
+                onTogglePinned={togglePinned}
               />
             ))}
           </div>
@@ -783,6 +837,10 @@ interface ConversationItemProps {
   isArchived: boolean;
   /** Arquiva/desarquiva a conversa. */
   onToggleArchived: (conversationId: string, nextArchived: boolean) => void;
+  /** Se a conversa está fixada (indicador visual + rótulo do menu). */
+  isPinned: boolean;
+  /** Fixa/desafixa a conversa. */
+  onTogglePinned: (conversationId: string, nextPinned: boolean) => void;
 }
 
 function ConversationItem({
@@ -795,6 +853,8 @@ function ConversationItem({
   onToggleContactTag,
   isArchived,
   onToggleArchived,
+  isPinned,
+  onTogglePinned,
 }: ConversationItemProps) {
   const contact = conversation.contact;
   const displayName = contact?.name || contact?.phone || "Desconhecido";
@@ -858,7 +918,12 @@ function ConversationItem({
           <span className="truncate text-sm font-medium text-foreground">
             {displayName}
           </span>
-          <span className="shrink-0 text-[10px] text-muted-foreground">{timeAgo}</span>
+          <span className="flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground">
+            {isPinned && (
+              <Pin className="size-3 fill-current text-muted-foreground" />
+            )}
+            {timeAgo}
+          </span>
         </div>
         {channelName && (
           <Badge
@@ -925,11 +990,14 @@ function ConversationItem({
               return (
                 <DropdownMenuItem
                   key={t.id}
-                  onSelect={(e) => {
-                    // Mantém o menu aberto para alternar várias etiquetas.
-                    e.preventDefault();
-                    onToggleContactTag(contactId, t.id, contactTagIds);
-                  }}
+                  // Base UI usa `onClick` (não `onSelect`, que é do Radix e no
+                  // Base UI vira o evento DOM nativo, nunca disparando).
+                  // `closeOnClick={false}` mantém o menu aberto para alternar
+                  // várias etiquetas de uma vez.
+                  closeOnClick={false}
+                  onClick={() =>
+                    onToggleContactTag(contactId, t.id, contactTagIds)
+                  }
                   className="text-sm text-popover-foreground"
                 >
                   <span className="flex flex-1 items-center gap-2">
@@ -949,7 +1017,23 @@ function ConversationItem({
           </>
         )}
         <DropdownMenuItem
-          onSelect={() => onToggleArchived(conversation.id, !isArchived)}
+          onClick={() => onTogglePinned(conversation.id, !isPinned)}
+          className="text-sm text-popover-foreground"
+        >
+          {isPinned ? (
+            <>
+              <PinOff className="size-3.5 shrink-0" />
+              <span>Desafixar conversa</span>
+            </>
+          ) : (
+            <>
+              <Pin className="size-3.5 shrink-0" />
+              <span>Fixar conversa</span>
+            </>
+          )}
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={() => onToggleArchived(conversation.id, !isArchived)}
           className="text-sm text-popover-foreground"
         >
           {isArchived ? (

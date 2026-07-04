@@ -160,6 +160,8 @@ export interface Conversation {
   unread_count: number;
   /** Conversa arquivada — some da lista principal, mesmo com mensagem nova. */
   archived?: boolean;
+  /** Fixada (estilo WhatsApp): timestamp de fixação, ou null/ausente se não fixada. Sobe ao topo da lista. */
+  pinned_at?: string | null;
   created_at: string;
   updated_at: string;
   contact?: Contact;
