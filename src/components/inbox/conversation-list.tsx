@@ -34,7 +34,6 @@ import {
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -835,9 +834,9 @@ export function ConversationList({
               className="max-h-80 w-56 overflow-y-auto border-border bg-popover"
             >
               {/* Ordenar */}
-              <DropdownMenuLabel className="text-[11px] uppercase tracking-wide text-muted-foreground">
+              <div className="px-1.5 pt-1.5 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                 Ordenar
-              </DropdownMenuLabel>
+              </div>
               {SORT_OPTIONS.map((opt) => (
                 <DropdownMenuItem
                   key={opt.value}
@@ -855,9 +854,9 @@ export function ConversationList({
 
               {/* Status */}
               <DropdownMenuSeparator />
-              <DropdownMenuLabel className="text-[11px] uppercase tracking-wide text-muted-foreground">
+              <div className="px-1.5 pt-1.5 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                 Status
-              </DropdownMenuLabel>
+              </div>
               {FILTER_OPTIONS.filter(
                 (o) => o.value !== "all" && o.value !== "unread",
               ).map((opt) => (
@@ -882,9 +881,9 @@ export function ConversationList({
               {tags.length > 0 && (
                 <>
                   <DropdownMenuSeparator />
-                  <DropdownMenuLabel className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                  <div className="px-1.5 pt-1.5 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                     Etiquetas
-                  </DropdownMenuLabel>
+                  </div>
                   {tags.map((t) => (
                     <DropdownMenuCheckboxItem
                       key={t.id}
@@ -908,9 +907,9 @@ export function ConversationList({
               {companies.length > 0 && (
                 <>
                   <DropdownMenuSeparator />
-                  <DropdownMenuLabel className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                  <div className="px-1.5 pt-1.5 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                     Empresa
-                  </DropdownMenuLabel>
+                  </div>
                   <DropdownMenuItem
                     onClick={() => setSelectedCompany(null)}
                     className={cn(
