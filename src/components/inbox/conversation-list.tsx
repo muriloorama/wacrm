@@ -34,6 +34,7 @@ import {
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -611,7 +612,12 @@ export function ConversationList({
     [onSelect]
   );
 
-  const activeFilter = FILTER_OPTIONS.find((o) => o.value === filter);
+  // Há algum filtro secundário ativo? (destaca o botão de seta em cor primária)
+  const hasSecondaryFilter =
+    (filter !== "all" && filter !== "unread") ||
+    selectedTagIds.length > 0 ||
+    selectedCompany !== null ||
+    sortBy !== "recent";
 
   return (
     // w-full on mobile so the list occupies the whole viewport when it's
@@ -745,8 +751,10 @@ export function ConversationList({
           />
         </div>
 
-        {/* Pílulas estilo WhatsApp — rolam na horizontal quando não cabem. */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {/* Filtros rápidos estilo WhatsApp: 3 pílulas fixas + um botão de seta
+            que recolhe TODO o resto (ordenar / status / etiquetas / empresa).
+            Sem rolagem horizontal — nada transborda nem é cortado. */}
+        <div className="flex items-center gap-1.5">
           {/* Todas */}
           <button
             type="button"
@@ -786,11 +794,11 @@ export function ConversationList({
             )}
           </button>
 
-          {/* Grupos */}
+          {/* Grupos (alterna) */}
           <button
             type="button"
             onClick={() => {
-              setGroupFilter("groups");
+              setGroupFilter(groupFilter === "groups" ? "all" : "groups");
               setFilter("all");
             }}
             className={cn(
@@ -808,14 +816,28 @@ export function ConversationList({
             )}
           </button>
 
-          {/* Ordenação: mais recentes / mais antigas / criado primeiro */}
+          {/* Botão de seta compacto: recolhe ordenar / status / etiquetas /
+              empresa. Sempre visível, encostado à direita — igual ao WhatsApp. */}
           <DropdownMenu>
-            <DropdownMenuTrigger className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground">
-              {SORT_OPTIONS.find((s) => s.value === sortBy)?.label ??
-                "Ordenar"}
-              <ChevronDown className="h-3 w-3" />
+            <DropdownMenuTrigger
+              aria-label="Mais filtros"
+              className={cn(
+                "ml-auto inline-flex size-7 shrink-0 items-center justify-center rounded-full transition-colors",
+                hasSecondaryFilter
+                  ? "bg-primary/15 text-primary"
+                  : "bg-muted text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <ChevronDown className="h-4 w-4" />
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="border-border bg-popover">
+            <DropdownMenuContent
+              align="end"
+              className="max-h-80 w-56 overflow-y-auto border-border bg-popover"
+            >
+              {/* Ordenar */}
+              <DropdownMenuLabel className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                Ordenar
+              </DropdownMenuLabel>
               {SORT_OPTIONS.map((opt) => (
                 <DropdownMenuItem
                   key={opt.value}
@@ -830,25 +852,12 @@ export function ConversationList({
                   {opt.label}
                 </DropdownMenuItem>
               ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
 
-          {/* Mais status: abertas / pendentes / fechadas / arquivadas */}
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              className={cn(
-                "inline-flex shrink-0 items-center gap-1 rounded-full px-3 py-1 text-xs font-medium transition-colors",
-                filter !== "all" && filter !== "unread"
-                  ? "bg-primary/15 text-primary"
-                  : "bg-muted text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {filter !== "all" && filter !== "unread"
-                ? FILTER_OPTIONS.find((o) => o.value === filter)?.label ?? "Mais"
-                : "Mais"}
-              <ChevronDown className="h-3 w-3" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="border-border bg-popover">
+              {/* Status */}
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                Status
+              </DropdownMenuLabel>
               {FILTER_OPTIONS.filter(
                 (o) => o.value !== "all" && o.value !== "unread",
               ).map((opt) => (
@@ -868,96 +877,69 @@ export function ConversationList({
                   {opt.label}
                 </DropdownMenuItem>
               ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
 
-          {tags.length > 0 && (
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                className={cn(
-                  "inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-3 py-1 text-xs font-medium transition-colors",
-                  selectedTagIds.length > 0
-                    ? "text-primary"
-                    : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                Etiquetas
-                {selectedTagIds.length > 0 && (
-                  <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
-                    {selectedTagIds.length}
-                  </span>
-                )}
-                <ChevronDown className="h-3 w-3" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent
-                align="start"
-                className="max-h-64 w-56 border-border bg-popover"
-              >
-                {tags.map((t) => (
-                  <DropdownMenuCheckboxItem
-                    key={t.id}
-                    checked={selectedTagIds.includes(t.id)}
-                    onCheckedChange={() => toggleTag(t.id)}
-                    className="text-sm text-popover-foreground"
-                  >
-                    <span className="flex items-center gap-2">
-                      <span
-                        className="h-2 w-2 shrink-0 rounded-full"
-                        style={{ backgroundColor: t.color }}
-                      />
-                      <span className="truncate">{t.name}</span>
-                    </span>
-                  </DropdownMenuCheckboxItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
+              {/* Etiquetas */}
+              {tags.length > 0 && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuLabel className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                    Etiquetas
+                  </DropdownMenuLabel>
+                  {tags.map((t) => (
+                    <DropdownMenuCheckboxItem
+                      key={t.id}
+                      checked={selectedTagIds.includes(t.id)}
+                      onCheckedChange={() => toggleTag(t.id)}
+                      className="text-sm text-popover-foreground"
+                    >
+                      <span className="flex items-center gap-2">
+                        <span
+                          className="h-2 w-2 shrink-0 rounded-full"
+                          style={{ backgroundColor: t.color }}
+                        />
+                        <span className="truncate">{t.name}</span>
+                      </span>
+                    </DropdownMenuCheckboxItem>
+                  ))}
+                </>
+              )}
 
-          {companies.length > 0 && (
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                className={cn(
-                  "inline-flex shrink-0 max-w-40 items-center gap-1 rounded-full bg-muted px-3 py-1 text-xs font-medium transition-colors",
-                  selectedCompany
-                    ? "text-primary"
-                    : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                <span className="truncate">{selectedCompany ?? "Empresa"}</span>
-                <ChevronDown className="h-3 w-3 shrink-0" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent
-                align="start"
-                className="max-h-64 w-56 border-border bg-popover"
-              >
-                <DropdownMenuItem
-                  onClick={() => setSelectedCompany(null)}
-                  className={cn(
-                    "text-sm",
-                    selectedCompany === null
-                      ? "text-primary"
-                      : "text-popover-foreground"
-                  )}
-                >
-                  Todas as empresas
-                </DropdownMenuItem>
-                {companies.map((co) => (
+              {/* Empresa */}
+              {companies.length > 0 && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuLabel className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                    Empresa
+                  </DropdownMenuLabel>
                   <DropdownMenuItem
-                    key={co}
-                    onClick={() => setSelectedCompany(co)}
+                    onClick={() => setSelectedCompany(null)}
                     className={cn(
                       "text-sm",
-                      selectedCompany === co
+                      selectedCompany === null
                         ? "text-primary"
-                        : "text-popover-foreground"
+                        : "text-popover-foreground",
                     )}
                   >
-                    <span className="truncate">{co}</span>
+                    Todas as empresas
                   </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
+                  {companies.map((co) => (
+                    <DropdownMenuItem
+                      key={co}
+                      onClick={() => setSelectedCompany(co)}
+                      className={cn(
+                        "text-sm",
+                        selectedCompany === co
+                          ? "text-primary"
+                          : "text-popover-foreground",
+                      )}
+                    >
+                      <span className="truncate">{co}</span>
+                    </DropdownMenuItem>
+                  ))}
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
 
         {hasContactFilters && (
