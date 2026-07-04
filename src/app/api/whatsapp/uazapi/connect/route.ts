@@ -238,6 +238,7 @@ export async function GET(request: Request) {
       let phone = row.phone;
       let qrcode: string | undefined;
       let paircode: string | undefined;
+      let profileName: string | null = null;
 
       if (row.uazapi_instance_token) {
         try {
@@ -247,6 +248,7 @@ export async function GET(request: Request) {
           connected = status.status?.connected ?? false;
           qrcode = status.instance?.qrcode || undefined;
           paircode = status.instance?.paircode || undefined;
+          profileName = status.instance?.profileName?.trim() || null;
           // Número conectado: `instance.owner` já vem limpo ("5511…"). O
           // `status.jid` é uma STRING ("5511…:1@s.whatsapp.net") — usada só
           // como fallback, extraindo os dígitos antes do ':'/'@'. (O código
@@ -283,6 +285,7 @@ export async function GET(request: Request) {
         status: connected ? "connected" : "disconnected",
         connected,
         phone,
+        profileName,
         qrcode,
         paircode,
       };

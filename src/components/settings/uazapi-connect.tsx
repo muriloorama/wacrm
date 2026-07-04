@@ -9,9 +9,11 @@ import {
   Plus,
   QrCode,
   RefreshCw,
+  Smartphone,
   Trash2,
   XCircle,
 } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -38,9 +40,20 @@ type Channel = {
   status: string;
   connected: boolean;
   phone?: string | null;
+  /** Nome do perfil do WhatsApp conectado (ex.: "Murilo Amaro"). */
+  profileName?: string | null;
   qrcode?: string;
   paircode?: string;
 };
+
+/** Formata só-dígitos BR em +55 (11) 95555-5555 quando reconhecível. */
+function formatPhone(raw?: string | null): string | null {
+  if (!raw) return null;
+  const d = raw.replace(/\D/g, "");
+  const m = d.match(/^55(\d{2})(\d{4,5})(\d{4})$/);
+  if (m) return `+55 (${m[1]}) ${m[2]}-${m[3]}`;
+  return `+${d}`;
+}
 
 type ConnectResponse = {
   configured: boolean;
@@ -429,31 +442,68 @@ export function UazapiConnect({ onStatusChange }: UazapiConnectProps) {
                 key={channel.id}
                 className="flex items-center justify-between gap-3 rounded-md border border-border bg-card px-3 py-2.5"
               >
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate font-medium text-foreground">
-                      {channel.name}
-                    </span>
-                    {channel.connected ? (
-                      <Badge variant="default" className="gap-1">
-                        <CheckCircle2 className="size-3" />
-                        Conectado
-                      </Badge>
-                    ) : (
-                      <Badge
-                        variant="outline"
-                        className="gap-1 text-red-400 border-red-900"
-                      >
-                        <XCircle className="size-3" />
-                        Desconectado
-                      </Badge>
-                    )}
+                <div className="flex min-w-0 items-center gap-3">
+                  {/* Avatar/ícone com estado de conexão sobreposto. */}
+                  <div className="relative shrink-0">
+                    <div
+                      className={cn(
+                        "flex size-10 items-center justify-center rounded-full",
+                        channel.connected
+                          ? "bg-emerald-500/15 text-emerald-500"
+                          : "bg-muted text-muted-foreground",
+                      )}
+                    >
+                      <Smartphone className="size-5" />
+                    </div>
+                    <span
+                      className={cn(
+                        "absolute -bottom-0.5 -right-0.5 size-3 rounded-full ring-2 ring-card",
+                        channel.connected ? "bg-emerald-500" : "bg-red-500",
+                      )}
+                      aria-hidden
+                    />
                   </div>
-                  {channel.phone && (
-                    <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                      {channel.phone}
+
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate font-medium text-foreground">
+                        {channel.name}
+                      </span>
+                      {channel.connected ? (
+                        <Badge variant="default" className="gap-1">
+                          <CheckCircle2 className="size-3" />
+                          Conectado
+                        </Badge>
+                      ) : (
+                        <Badge
+                          variant="outline"
+                          className="gap-1 text-red-400 border-red-900"
+                        >
+                          <XCircle className="size-3" />
+                          Desconectado
+                        </Badge>
+                      )}
+                    </div>
+                    {/* Perfil do WhatsApp + número formatado. */}
+                    <p className="mt-0.5 flex items-center gap-1.5 truncate text-xs text-muted-foreground">
+                      {channel.profileName && (
+                        <span className="truncate text-foreground/80">
+                          {channel.profileName}
+                        </span>
+                      )}
+                      {channel.profileName && channel.phone && (
+                        <span aria-hidden>·</span>
+                      )}
+                      {formatPhone(channel.phone) && (
+                        <span className="truncate">
+                          {formatPhone(channel.phone)}
+                        </span>
+                      )}
+                      {!channel.profileName && !channel.phone && (
+                        <span className="italic">Aguardando conexão…</span>
+                      )}
                     </p>
-                  )}
+                  </div>
                 </div>
 
                 <div className="flex shrink-0 items-center gap-2">

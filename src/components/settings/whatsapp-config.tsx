@@ -424,41 +424,41 @@ export function WhatsAppConfig() {
   // Só oferece o QR quando o provedor está (ou pode estar) configurado no
   // servidor. Se a sondagem confirmar que não está, escondemos a opção.
   const qrAvailable = qrConfigured !== false;
+  // A API Oficial (Meta) está "Em breve": o seletor de método só aparece
+  // quando ela JÁ está configurada (phone_number_id salvo). Sem isso, a tela
+  // mostra direto o fluxo de QR Code (único método ativo hoje).
+  const metaConfigured = Boolean(config?.phone_number_id);
 
   return (
     <section className="animate-in fade-in-50 duration-200">
       <SettingsPanelHead
         title="Conexão do WhatsApp"
-        description="Escolha como conectar seu WhatsApp: pela API Oficial da Meta ou por QR Code."
+        description="Conecte seus números do WhatsApp escaneando um QR Code — sem credenciais."
       />
 
-      {/* Seletor de método — o usuário escolhe primeiro e só vê o fluxo
-          correspondente. As duas opções continuam sempre acessíveis para
-          trocar de método a qualquer momento. */}
-      <div className="mb-6 grid gap-3 sm:grid-cols-2">
-        <MethodCard
-          active={method === 'meta'}
-          onClick={() => setMethod('meta')}
-          icon={<Building2 className="size-5" />}
-          title="API Oficial (Meta)"
-          description="Conecte via WhatsApp Business API com suas credenciais da Meta."
-          comingSoon
-        />
-        {qrAvailable && (
+      {/* A API Oficial (Meta) está "Em breve": só aparece quando/se estiver
+          configurada. Hoje o único método é o QR Code, então mostramos o
+          fluxo do QR direto, sem o seletor de dois cards. O bloco Meta abaixo
+          fica montado (estado no pai) mas oculto enquanto method !== 'meta'. */}
+      {metaConfigured && (
+        <div className="mb-6 grid gap-3 sm:grid-cols-2">
           <MethodCard
-            active={method === 'qr'}
-            onClick={() => setMethod('qr')}
-            icon={<QrCode className="size-5" />}
-            title="QR Code"
-            description="Conecte escaneando um QR Code com seu celular. Rápido, sem credenciais."
+            active={method === 'meta'}
+            onClick={() => setMethod('meta')}
+            icon={<Building2 className="size-5" />}
+            title="API Oficial (Meta)"
+            description="Conecte via WhatsApp Business API com suas credenciais da Meta."
           />
-        )}
-      </div>
-
-      {method === null && (
-        <p className="mb-6 text-sm text-muted-foreground">
-          Selecione um método de conexão acima para começar.
-        </p>
+          {qrAvailable && (
+            <MethodCard
+              active={method === 'qr'}
+              onClick={() => setMethod('qr')}
+              icon={<QrCode className="size-5" />}
+              title="QR Code"
+              description="Conecte escaneando um QR Code com seu celular."
+            />
+          )}
+        </div>
       )}
 
       {/* Fluxo da API Oficial (Meta). Fica sempre montado (todo o estado do
