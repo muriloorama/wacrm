@@ -484,25 +484,23 @@ export function UazapiConnect({ onStatusChange }: UazapiConnectProps) {
                         </Badge>
                       )}
                     </div>
-                    {/* Perfil do WhatsApp + número formatado. */}
-                    <p className="mt-0.5 flex items-center gap-1.5 truncate text-xs text-muted-foreground">
-                      {channel.profileName && (
-                        <span className="truncate text-foreground/80">
-                          {channel.profileName}
-                        </span>
-                      )}
-                      {channel.profileName && channel.phone && (
-                        <span aria-hidden>·</span>
-                      )}
-                      {formatPhone(channel.phone) && (
-                        <span className="truncate">
-                          {formatPhone(channel.phone)}
-                        </span>
-                      )}
-                      {!channel.profileName && !channel.phone && (
-                        <span className="italic">Aguardando conexão…</span>
-                      )}
-                    </p>
+                    {/* Linha 2: perfil do WhatsApp. Linha 3: número (em linha
+                        própria, sem truncar — senão nomes longos cobrem o
+                        telefone). */}
+                    {channel.profileName && (
+                      <p className="mt-0.5 truncate text-xs text-foreground/80">
+                        {channel.profileName}
+                      </p>
+                    )}
+                    {formatPhone(channel.phone) ? (
+                      <p className="text-xs text-muted-foreground">
+                        {formatPhone(channel.phone)}
+                      </p>
+                    ) : !channel.profileName ? (
+                      <p className="mt-0.5 text-xs italic text-muted-foreground">
+                        Aguardando conexão…
+                      </p>
+                    ) : null}
                   </div>
                 </div>
 
