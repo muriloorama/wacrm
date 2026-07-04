@@ -1,8 +1,10 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
+import { formatCurrency } from "@/lib/currency";
 import { toast } from "sonner";
 import type { Contact, Deal, ContactNote, Tag } from "@/types";
 import {
@@ -328,17 +330,18 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
                 <p className="px-1 text-xs text-muted-foreground">Nenhum negócio</p>
               ) : (
                 deals.map((deal) => (
-                  <div
+                  <Link
                     key={deal.id}
-                    className="rounded-lg bg-muted px-3 py-2"
+                    href="/pipelines"
+                    title="Abrir no funil para editar o valor"
+                    className="block rounded-lg bg-muted px-3 py-2 transition-colors hover:bg-muted/70"
                   >
                     <p className="text-sm font-medium text-foreground">
                       {deal.title}
                     </p>
                     <div className="mt-1 flex items-center justify-between text-xs text-muted-foreground">
                       <span>
-                        {deal.currency ?? "$"}
-                        {deal.value.toLocaleString()}
+                        {formatCurrency(deal.value, deal.currency)}
                       </span>
                       {deal.stage && (
                         <span
@@ -352,7 +355,7 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
                         </span>
                       )}
                     </div>
-                  </div>
+                  </Link>
                 ))
               )}
             </div>
