@@ -5,6 +5,7 @@ import "./globals.css";
 import { ThemeProvider } from "@/hooks/use-theme";
 import { ThemedToaster } from "@/components/themed-toaster";
 import {
+  ACCENT_STORAGE_KEY,
   DEFAULT_MODE,
   DEFAULT_THEME,
   MODE_STORAGE_KEY,
@@ -70,6 +71,24 @@ const THEME_BOOT_SCRIPT = `
     var MODES = ${JSON.stringify(MODES)};
     var savedMode = localStorage.getItem(MODE_KEY);
     d.dataset.mode = MODES.indexOf(savedMode) !== -1 ? savedMode : MODE_DEFAULT;
+
+    // Cor de destaque personalizada (sobrescreve o preset). Replay antes do
+    // paint para não piscar a cor do preset ao recarregar.
+    var savedAccent = localStorage.getItem(${JSON.stringify(ACCENT_STORAGE_KEY)});
+    if (/^#[0-9a-fA-F]{6}$/.test(savedAccent || "")) {
+      var toLin = function (c) {
+        return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+      };
+      var lr = toLin(parseInt(savedAccent.slice(1, 3), 16) / 255);
+      var lg = toLin(parseInt(savedAccent.slice(3, 5), 16) / 255);
+      var lb = toLin(parseInt(savedAccent.slice(5, 7), 16) / 255);
+      var lum = 0.2126 * lr + 0.7152 * lg + 0.0722 * lb;
+      var fg = lum > 0.45 ? "oklch(0.15 0 0)" : "oklch(0.985 0 0)";
+      var bgVars = ["--primary", "--ring", "--sidebar-primary", "--sidebar-ring"];
+      var fgVars = ["--primary-foreground", "--sidebar-primary-foreground"];
+      for (var i = 0; i < bgVars.length; i++) d.style.setProperty(bgVars[i], savedAccent);
+      for (var k = 0; k < fgVars.length; k++) d.style.setProperty(fgVars[k], fg);
+    }
   } catch (_e) {
     d.dataset.theme = ${JSON.stringify(DEFAULT_THEME)};
     d.dataset.mode = ${JSON.stringify(DEFAULT_MODE)};

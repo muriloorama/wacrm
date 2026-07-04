@@ -10,10 +10,14 @@ import {
 } from "react";
 
 import {
+  ACCENT_STORAGE_KEY,
   DEFAULT_MODE,
   DEFAULT_THEME,
   MODE_STORAGE_KEY,
   STORAGE_KEY,
+  applyAccent,
+  clearAccent,
+  isHexColor,
   isMode,
   isThemeId,
   type Mode,
@@ -43,6 +47,10 @@ interface ThemeContextValue {
   mode: Mode;
   setMode: (next: Mode) => void;
   toggleMode: () => void;
+  /** Cor de destaque personalizada (#rrggbb) ou null quando usa o preset. */
+  accent: string | null;
+  /** Define uma cor livre (null limpa e volta ao preset do tema). */
+  setAccent: (next: string | null) => void;
 }
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
@@ -76,9 +84,21 @@ function readInitialMode(): Mode {
   return DEFAULT_MODE;
 }
 
+function readInitialAccent(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const stored = localStorage.getItem(ACCENT_STORAGE_KEY);
+    if (isHexColor(stored)) return stored;
+  } catch {
+    // localStorage pode falhar em navegação privada/sandbox.
+  }
+  return null;
+}
+
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<ThemeId>(readInitialTheme);
   const [mode, setModeState] = useState<Mode>(readInitialMode);
+  const [accent, setAccentState] = useState<string | null>(readInitialAccent);
 
   const setTheme = useCallback((next: ThemeId) => {
     setThemeState(next);
@@ -109,6 +129,24 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     setMode(mode === "dark" ? "light" : "dark");
   }, [mode, setMode]);
 
+  const setAccent = useCallback((next: string | null) => {
+    setAccentState(next);
+    if (typeof document !== "undefined") {
+      const root = document.documentElement;
+      if (next && isHexColor(next)) applyAccent(root, next);
+      else clearAccent(root);
+    }
+    try {
+      if (next && isHexColor(next)) {
+        localStorage.setItem(ACCENT_STORAGE_KEY, next);
+      } else {
+        localStorage.removeItem(ACCENT_STORAGE_KEY);
+      }
+    } catch {
+      // Navegação privada — o estado em memória já atualizou para a aba atual.
+    }
+  }, []);
+
   // Sync from other tabs — change theme or mode in tab A, tab B
   // catches up without a refresh.
   useEffect(() => {
@@ -125,6 +163,17 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
           setModeState(e.newValue);
           document.documentElement.dataset.mode = e.newValue;
         }
+        return;
+      }
+      if (e.key === ACCENT_STORAGE_KEY) {
+        const root = document.documentElement;
+        if (isHexColor(e.newValue)) {
+          setAccentState(e.newValue);
+          applyAccent(root, e.newValue);
+        } else {
+          setAccentState(null);
+          clearAccent(root);
+        }
       }
     }
     window.addEventListener("storage", onStorage);
@@ -132,7 +181,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, [theme, mode]);
 
   return (
-    <ThemeContext.Provider value={{ theme, setTheme, mode, setMode, toggleMode }}>
+    <ThemeContext.Provider
+      value={{ theme, setTheme, mode, setMode, toggleMode, accent, setAccent }}
+    >
       {children}
     </ThemeContext.Provider>
   );
@@ -150,6 +201,8 @@ export function useTheme(): ThemeContextValue {
       mode: DEFAULT_MODE,
       setMode: () => {},
       toggleMode: () => {},
+      accent: null,
+      setAccent: () => {},
     };
   }
   return ctx;

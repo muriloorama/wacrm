@@ -1,10 +1,11 @@
 "use client";
 
-import { Check, Moon, Palette, SunMoon, Sun } from "lucide-react";
+import { Check, Moon, Palette, Pipette, SunMoon, Sun } from "lucide-react";
 
 import { useTheme } from "@/hooks/use-theme";
 import { MODES, THEMES, type Mode, type ThemeId } from "@/lib/themes";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 import { SettingsPanelHead } from "./settings-panel-head";
 
 /**
@@ -20,7 +21,10 @@ import { SettingsPanelHead } from "./settings-panel-head";
  * loads.
  */
 export function AppearancePanel() {
-  const { theme, setTheme, mode, setMode } = useTheme();
+  const { theme, setTheme, mode, setMode, accent, setAccent } = useTheme();
+  // Cor inicial do seletor quando ainda não há cor personalizada: o swatch
+  // do preset atual (aproximado por um hex neutro, já que o preset é oklch).
+  const pickerValue = accent ?? "#7c3aed";
   return (
     <section className="max-w-3xl animate-in fade-in-50 duration-200">
       <SettingsPanelHead
@@ -64,10 +68,58 @@ export function AppearancePanel() {
               name={t.name}
               tagline={t.tagline}
               swatch={t.swatch}
-              isActive={t.id === theme}
-              onPick={() => setTheme(t.id)}
+              // Um preset só está "ativo" se não houver cor personalizada
+              // sobrescrevendo. Escolher um preset limpa a cor custom.
+              isActive={t.id === theme && !accent}
+              onPick={() => {
+                setAccent(null);
+                setTheme(t.id);
+              }}
             />
           ))}
+        </div>
+      </div>
+
+      <div className="mt-8 space-y-4">
+        <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+          <Pipette className="size-4 text-muted-foreground" />
+          Cor personalizada
+        </h3>
+
+        <div
+          className={cn(
+            "flex flex-wrap items-center gap-4 rounded-lg border bg-card p-4",
+            accent ? "border-primary/60 ring-2 ring-primary/40" : "border-border",
+          )}
+        >
+          {/* Seletor nativo de cor — troca ao vivo, salvo neste dispositivo. */}
+          <input
+            type="color"
+            value={pickerValue}
+            onChange={(e) => setAccent(e.target.value)}
+            aria-label="Escolher cor de destaque personalizada"
+            className="h-12 w-14 shrink-0 cursor-pointer rounded-lg border border-border bg-transparent p-1"
+          />
+          <div className="min-w-[160px] flex-1">
+            <p className="text-sm font-semibold text-foreground">
+              {accent ? "Cor personalizada ativa" : "Escolha qualquer cor"}
+            </p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {accent
+                ? `${accent.toUpperCase()} — sobrescreve o preset acima.`
+                : "Sobrescreve a cor de destaque dos presets. Aplica na hora."}
+            </p>
+          </div>
+          {accent && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setAccent(null)}
+            >
+              <Check className="size-4" />
+              Voltar ao preset
+            </Button>
+          )}
         </div>
       </div>
     </section>
