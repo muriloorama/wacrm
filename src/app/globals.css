@@ -119,6 +119,14 @@ html[data-mode="dark"] {
   --sidebar-border: oklch(0.28 0.01 260);
 }
 
+/* Cor dos balões de mensagem enviados (agente). Por padrão herda o destaque
+   (--primary); cada conta pode sobrescrever `--chat-out` com uma cor própria
+   (inline no <html>, aplicada pelo AuthProvider). O foreground acompanha. */
+:root {
+  --chat-out: var(--primary);
+  --chat-out-foreground: var(--primary-foreground);
+}
+
 html[data-mode="light"] {
   /* Scrollbars/controles nativos claros no modo claro (senão a barra de
      rolagem e o fundo do scroll ficam escuros — ex.: editar negócio no Kanban). */

@@ -57,6 +57,8 @@ export async function PATCH(request: Request) {
           name?: unknown;
           logo_light_url?: unknown;
           logo_dark_url?: unknown;
+          accent_color?: unknown;
+          bubble_color?: unknown;
         }
       | null;
 
@@ -99,6 +101,23 @@ export async function PATCH(request: Request) {
       update[key] = v === "" ? null : (v as string | null);
     }
 
+    // Cores de marca (opcionais). Hex #rrggbb ou null (volta ao padrão).
+    for (const key of ["accent_color", "bubble_color"] as const) {
+      const v = body?.[key];
+      if (v === undefined) continue;
+      if (v === null || v === "") {
+        update[key] = null;
+        continue;
+      }
+      if (typeof v !== "string" || !/^#[0-9a-fA-F]{6}$/.test(v)) {
+        return NextResponse.json(
+          { error: `'${key}' deve ser um hex #rrggbb ou null` },
+          { status: 400 },
+        );
+      }
+      update[key] = v;
+    }
+
     if (Object.keys(update).length === 0) {
       return NextResponse.json(
         { error: "Nada para atualizar" },
@@ -113,7 +132,9 @@ export async function PATCH(request: Request) {
       .from("accounts")
       .update(update)
       .eq("id", ctx.accountId)
-      .select("id, name, logo_light_url, logo_dark_url")
+      .select(
+        "id, name, logo_light_url, logo_dark_url, accent_color, bubble_color",
+      )
       .single();
 
     if (error) {

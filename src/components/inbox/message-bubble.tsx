@@ -303,7 +303,7 @@ export function MessageBubble({
         className={cn(
           "relative rounded-2xl px-3 py-2",
           isAgent
-            ? "rounded-br-md bg-primary text-primary-foreground"
+            ? "rounded-br-md bg-[var(--chat-out)] text-[var(--chat-out-foreground)]"
             : "rounded-bl-md bg-muted text-foreground",
         )}
       >

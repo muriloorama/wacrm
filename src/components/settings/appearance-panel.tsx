@@ -38,10 +38,7 @@ const LOGO_MIME = new Set(["image/png", "image/webp", "image/svg+xml"]);
  * loads.
  */
 export function AppearancePanel() {
-  const { theme, setTheme, mode, setMode, accent, setAccent } = useTheme();
-  // Cor inicial do seletor quando ainda não há cor personalizada: o swatch
-  // do preset atual (aproximado por um hex neutro, já que o preset é oklch).
-  const pickerValue = accent ?? "#7c3aed";
+  const { theme, setTheme, mode, setMode } = useTheme();
   return (
     <section className="max-w-3xl animate-in fade-in-50 duration-200">
       <SettingsPanelHead
@@ -85,63 +82,130 @@ export function AppearancePanel() {
               name={t.name}
               tagline={t.tagline}
               swatch={t.swatch}
-              // Um preset só está "ativo" se não houver cor personalizada
-              // sobrescrevendo. Escolher um preset limpa a cor custom.
-              isActive={t.id === theme && !accent}
-              onPick={() => {
-                setAccent(null);
-                setTheme(t.id);
-              }}
+              isActive={t.id === theme}
+              onPick={() => setTheme(t.id)}
             />
           ))}
         </div>
       </div>
 
-      <div className="mt-8 space-y-4">
-        <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
-          <Pipette className="size-4 text-muted-foreground" />
-          Cor personalizada
-        </h3>
-
-        <div
-          className={cn(
-            "flex flex-wrap items-center gap-4 rounded-lg border bg-card p-4",
-            accent ? "border-primary/60 ring-2 ring-primary/40" : "border-border",
-          )}
-        >
-          {/* Seletor nativo de cor — troca ao vivo, salvo neste dispositivo. */}
-          <input
-            type="color"
-            value={pickerValue}
-            onChange={(e) => setAccent(e.target.value)}
-            aria-label="Escolher cor de destaque personalizada"
-            className="h-12 w-14 shrink-0 cursor-pointer rounded-lg border border-border bg-transparent p-1"
-          />
-          <div className="min-w-[160px] flex-1">
-            <p className="text-sm font-semibold text-foreground">
-              {accent ? "Cor personalizada ativa" : "Escolha qualquer cor"}
-            </p>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              {accent
-                ? `${accent.toUpperCase()} — sobrescreve o preset acima.`
-                : "Sobrescreve a cor de destaque dos presets. Aplica na hora."}
-            </p>
-          </div>
-          {accent && (
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setAccent(null)}
-            >
-              <Check className="size-4" />
-              Voltar ao preset
-            </Button>
-          )}
-        </div>
-      </div>
+      <AccountColors />
 
       <LogoBranding />
     </section>
+  );
+}
+
+/**
+ * Cores de MARCA por conta (admin+): cor de destaque (--primary) e cor dos
+ * balões de mensagem enviados. Aplicadas para toda a equipe da conta e salvas
+ * no servidor (diferente do modo claro/escuro, que é por dispositivo).
+ */
+function AccountColors() {
+  const { account, canEditSettings } = useAuth();
+  if (!canEditSettings) return null;
+  return (
+    <div className="mt-8 space-y-4">
+      <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+        <Pipette className="size-4 text-muted-foreground" />
+        Cores da conta
+      </h3>
+      <p className="max-w-2xl text-xs text-muted-foreground">
+        Cores da marca desta conta, aplicadas para toda a equipe. Deixe no
+        padrão para herdar o preset acima.
+      </p>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <ColorField
+          label="Cor de destaque"
+          hint="Botões, links e realces em todo o app."
+          field="accent_color"
+          value={account?.accent_color ?? null}
+          fallback="#7c3aed"
+        />
+        <ColorField
+          label="Cor dos balões"
+          hint="Fundo das mensagens que você envia no inbox."
+          field="bubble_color"
+          value={account?.bubble_color ?? null}
+          fallback="#7c3aed"
+        />
+      </div>
+    </div>
+  );
+}
+
+function ColorField({
+  label,
+  hint,
+  field,
+  value,
+  fallback,
+}: {
+  label: string;
+  hint: string;
+  field: "accent_color" | "bubble_color";
+  value: string | null;
+  fallback: string;
+}) {
+  const { refreshProfile } = useAuth();
+  const [busy, setBusy] = useState(false);
+
+  const save = async (color: string | null) => {
+    setBusy(true);
+    try {
+      const res = await fetch("/api/account", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ [field]: color }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        throw new Error(body?.error ?? "Falha ao salvar a cor");
+      }
+      await refreshProfile();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Falha ao salvar a cor");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-3 rounded-lg border bg-card p-3",
+        value ? "border-primary/50" : "border-border",
+      )}
+    >
+      <input
+        type="color"
+        value={value ?? fallback}
+        disabled={busy}
+        onChange={(e) => save(e.target.value)}
+        aria-label={label}
+        className="h-11 w-12 shrink-0 cursor-pointer rounded-lg border border-border bg-transparent p-1"
+      />
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium text-foreground">{label}</p>
+        <p className="mt-0.5 truncate text-xs text-muted-foreground">
+          {value ? `${value.toUpperCase()} — ${hint}` : hint}
+        </p>
+      </div>
+      {value && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          disabled={busy}
+          onClick={() => save(null)}
+          className="shrink-0 text-muted-foreground hover:text-foreground"
+        >
+          Padrão
+        </Button>
+      )}
+    </div>
   );
 }
 

@@ -14,6 +14,13 @@ import { createClient } from "@/lib/supabase/client";
 import type { User } from "@supabase/supabase-js";
 import { DEFAULT_CURRENCY } from "@/lib/currency";
 import {
+  applyAccent,
+  applyBubble,
+  clearAccent,
+  clearBubble,
+  isHexColor,
+} from "@/lib/themes";
+import {
   canEditSettings as canEditSettingsFor,
   canManageMembers as canManageMembersFor,
   canSendMessages as canSendMessagesFor,
@@ -49,6 +56,9 @@ interface AccountSummary {
   /** Logo white-label (fundo claro / fundo escuro). null = usa o padrão. */
   logo_light_url: string | null;
   logo_dark_url: string | null;
+  /** Cores de marca por conta (#rrggbb) ou null (usa o padrão do tema). */
+  accent_color: string | null;
+  bubble_color: string | null;
 }
 
 interface AuthContextValue {
@@ -184,8 +194,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (data.account_id) {
           const { data: account, error: accountErr } = await supabase
             .from("accounts")
-            // default_currency added in migration 021; logos in 038.
-            .select("id, name, default_currency, logo_light_url, logo_dark_url")
+            // default_currency added in migration 021; logos 038; cores 039.
+            .select(
+              "id, name, default_currency, logo_light_url, logo_dark_url, accent_color, bubble_color",
+            )
             .eq("id", data.account_id)
             .maybeSingle();
           if (accountErr) {
@@ -202,6 +214,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               default_currency: account.default_currency ?? DEFAULT_CURRENCY,
               logo_light_url: (account.logo_light_url as string) ?? null,
               logo_dark_url: (account.logo_dark_url as string) ?? null,
+              accent_color: (account.accent_color as string) ?? null,
+              bubble_color: (account.bubble_color as string) ?? null,
             };
           }
         }
@@ -222,7 +236,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const { data: memberRows, error: membersErr } = await supabase
           .from("account_members")
           .select(
-            "account:accounts(id, name, default_currency, logo_light_url, logo_dark_url)",
+            "account:accounts(id, name, default_currency, logo_light_url, logo_dark_url, accent_color, bubble_color)",
           )
           .eq("user_id", userId);
         if (membersErr) {
@@ -240,6 +254,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                     logo_light_url:
                       (a.logo_light_url as string | null) ?? null,
                     logo_dark_url: (a.logo_dark_url as string | null) ?? null,
+                    accent_color: (a.accent_color as string | null) ?? null,
+                    bubble_color: (a.bubble_color as string | null) ?? null,
                   }
                 : null;
             })
@@ -389,6 +405,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
     [user?.id, profile?.account_id],
   );
+
+  // Aplica as cores de MARCA da conta ativa (destaque + balões) nas
+  // variáveis CSS do <html>. São por conta (compartilhadas com a equipe),
+  // diferente do modo claro/escuro (por dispositivo). Ao trocar de conta
+  // ou sair, limpa e volta ao padrão do tema.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const root = document.documentElement;
+    const accent = account?.accent_color;
+    if (accent && isHexColor(accent)) applyAccent(root, accent);
+    else clearAccent(root);
+    const bubble = account?.bubble_color;
+    if (bubble && isHexColor(bubble)) applyBubble(root, bubble);
+    else clearBubble(root);
+  }, [account?.accent_color, account?.bubble_color]);
 
   // Derive the role booleans once per profile change rather than on
   // every consumer render. Cheap regardless, but the memo also gives

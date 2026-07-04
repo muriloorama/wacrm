@@ -159,3 +159,15 @@ export function clearAccent(root: HTMLElement): void {
     root.style.removeProperty(v);
   }
 }
+
+/** Cor dos balões de mensagem enviados (agente). */
+export function applyBubble(root: HTMLElement, hex: string): void {
+  root.style.setProperty("--chat-out", hex);
+  root.style.setProperty("--chat-out-foreground", accentForeground(hex));
+}
+
+/** Remove a cor custom dos balões — voltam a herdar o destaque (--primary). */
+export function clearBubble(root: HTMLElement): void {
+  root.style.removeProperty("--chat-out");
+  root.style.removeProperty("--chat-out-foreground");
+}
