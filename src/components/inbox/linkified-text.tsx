@@ -18,6 +18,22 @@ const PATTERNS: {
   { name: "strike", re: /~([^~\n]+?)~/ },
 ];
 
+/**
+ * Remove os marcadores de formatação do WhatsApp (*negrito*, _itálico_,
+ * ~riscado~, `mono`/```mono```) mantendo só o texto. Usado em PRÉVIAS de
+ * uma linha (ex.: coluna do lead na lista de conversas), onde renderizar
+ * negrito/mono/links fica estranho — o WhatsApp também mostra o texto limpo
+ * ali. Não toca em URLs (ficam legíveis como texto).
+ */
+export function stripWhatsAppMarkers(text: string): string {
+  return text
+    .replace(/```([\s\S]+?)```/g, "$1")
+    .replace(/`([^`\n]+?)`/g, "$1")
+    .replace(/\*([^*\n]+?)\*/g, "$1")
+    .replace(/_([^_\n]+?)_/g, "$1")
+    .replace(/~([^~\n]+?)~/g, "$1");
+}
+
 function formatInline(
   text: string,
   counter: { n: number },

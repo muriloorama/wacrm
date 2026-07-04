@@ -46,6 +46,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { SmartAvatar } from "@/components/ui/smart-avatar";
+import { stripWhatsAppMarkers } from "./linkified-text";
 
 /** Canal de WhatsApp para o seletor de caixa de entrada. */
 type ChannelOption = { id: string; name: string };
@@ -940,8 +941,10 @@ function ConversationItem({
                 <mediaPreview.icon className="size-3 shrink-0" />
                 <span className="truncate">{mediaPreview.label}</span>
               </>
+            ) : conversation.last_message_text ? (
+              stripWhatsAppMarkers(conversation.last_message_text)
             ) : (
-              conversation.last_message_text || "Nenhuma mensagem ainda"
+              "Nenhuma mensagem ainda"
             )}
           </p>
           <div className="flex shrink-0 items-center gap-1.5">
