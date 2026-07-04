@@ -74,6 +74,9 @@ interface AccountSummary {
   bubble_color: string | null;
   /** Origens configuráveis (de onde veio o lead): [{id,label,color}]. */
   origens: AccountOrigin[];
+  /** Módulos alternáveis habilitados (migration 044). null = todos. Ver
+   *  @/lib/modules e isModuleEnabled. */
+  enabled_modules: string[] | null;
 }
 
 interface AuthContextValue {
@@ -209,9 +212,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (data.account_id) {
           const { data: account, error: accountErr } = await supabase
             .from("accounts")
-            // default_currency 021; logos 038; cores 039; origens 040.
+            // default_currency 021; logos 038; cores 039; origens 040;
+            // enabled_modules 044.
             .select(
-              "id, name, default_currency, logo_light_url, logo_dark_url, accent_color, bubble_color, origens",
+              "id, name, default_currency, logo_light_url, logo_dark_url, accent_color, bubble_color, origens, enabled_modules",
             )
             .eq("id", data.account_id)
             .maybeSingle();
@@ -232,6 +236,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               accent_color: (account.accent_color as string) ?? null,
               bubble_color: (account.bubble_color as string) ?? null,
               origens: toOrigens(account.origens),
+              enabled_modules: Array.isArray(account.enabled_modules)
+                ? (account.enabled_modules as string[])
+                : null,
             };
           }
         }
@@ -252,7 +259,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const { data: memberRows, error: membersErr } = await supabase
           .from("account_members")
           .select(
-            "account:accounts(id, name, default_currency, logo_light_url, logo_dark_url, accent_color, bubble_color, origens)",
+            "account:accounts(id, name, default_currency, logo_light_url, logo_dark_url, accent_color, bubble_color, origens, enabled_modules)",
           )
           .eq("user_id", userId);
         if (membersErr) {
@@ -273,6 +280,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                     accent_color: (a.accent_color as string | null) ?? null,
                     bubble_color: (a.bubble_color as string | null) ?? null,
                     origens: toOrigens(a.origens),
+                    enabled_modules: Array.isArray(a.enabled_modules)
+                      ? (a.enabled_modules as string[])
+                      : null,
                   }
                 : null;
             })

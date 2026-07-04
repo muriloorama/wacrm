@@ -2,12 +2,22 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Copy, Loader2, LogIn, LogOut, Plus, Trash2 } from "lucide-react";
+import {
+  Blocks,
+  Copy,
+  Loader2,
+  LogIn,
+  LogOut,
+  Plus,
+  Trash2,
+} from "lucide-react";
 
 import { useAuth } from "@/hooks/use-auth";
+import { TOGGLEABLE_MODULES } from "@/lib/modules";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogContent,
@@ -35,6 +45,8 @@ interface AdminAccount {
   max_users: number;
   created_at: string | null;
   isMember: boolean;
+  /** Módulos alternáveis habilitados. null = todos habilitados. */
+  enabled_modules: string[] | null;
 }
 
 // Estado editável por linha: o que está nos inputs + se está salvando.
@@ -77,6 +89,10 @@ export function AdminAccountsClient() {
   const [deleteTarget, setDeleteTarget] = useState<AdminAccount | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState("");
   const [deleting, setDeleting] = useState(false);
+  // Diálogo "Módulos": conta-alvo + rascunho do conjunto de chaves habilitadas.
+  const [modulesTarget, setModulesTarget] = useState<AdminAccount | null>(null);
+  const [modulesDraft, setModulesDraft] = useState<Set<string>>(new Set());
+  const [savingModules, setSavingModules] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -294,6 +310,63 @@ export function AdminAccountsClient() {
     }
   };
 
+  // Abre o diálogo de módulos semeando o rascunho: null (sem config) = todos
+  // habilitados; caso contrário, só as chaves salvas.
+  const openModules = (account: AdminAccount) => {
+    const all = TOGGLEABLE_MODULES.map((m) => m.key as string);
+    setModulesDraft(
+      new Set(account.enabled_modules == null ? all : account.enabled_modules),
+    );
+    setModulesTarget(account);
+  };
+
+  const toggleModule = (key: string, on: boolean) => {
+    setModulesDraft((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  };
+
+  const saveModules = async () => {
+    if (!modulesTarget) return;
+    // Todos habilitados → grava null (config "limpa", retrocompatível); caso
+    // contrário grava a lista explícita das chaves marcadas.
+    const enabled_modules =
+      modulesDraft.size === TOGGLEABLE_MODULES.length
+        ? null
+        : [...modulesDraft];
+    setSavingModules(true);
+    try {
+      const res = await fetch("/api/admin/accounts", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accountId: modulesTarget.id,
+          enabled_modules,
+        }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        throw new Error(body?.error ?? "Falha ao salvar módulos");
+      }
+      setAccounts((prev) =>
+        prev.map((a) =>
+          a.id === modulesTarget.id ? { ...a, enabled_modules } : a,
+        ),
+      );
+      toast.success(`Módulos de "${modulesTarget.name}" atualizados`);
+      setModulesTarget(null);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Falha ao salvar módulos");
+    } finally {
+      setSavingModules(false);
+    }
+  };
+
   if (loading) {
     return (
       <p className="text-sm text-muted-foreground">Carregando contas…</p>
@@ -425,6 +498,20 @@ export function AdminAccountsClient() {
                           <LogIn className="size-3.5" />
                           Entrar
                         </>
+                      )}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => openModules(a)}
+                      title="Escolher quais módulos esta conta enxerga"
+                    >
+                      <Blocks className="size-3.5" />
+                      Módulos
+                      {a.enabled_modules != null && (
+                        <span className="ml-1 rounded-full bg-primary/15 px-1.5 text-[10px] font-semibold text-primary">
+                          {a.enabled_modules.length}/{TOGGLEABLE_MODULES.length}
+                        </span>
                       )}
                     </Button>
                     <Button
@@ -649,6 +736,66 @@ export function AdminAccountsClient() {
                   <Trash2 className="size-4" />
                   Excluir tudo
                 </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Diálogo: módulos habilitados por conta */}
+      <Dialog
+        open={modulesTarget !== null}
+        onOpenChange={(o) => {
+          if (!o && !savingModules) setModulesTarget(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Módulos da conta</DialogTitle>
+            <DialogDescription>
+              Escolha o que <strong>{modulesTarget?.name}</strong> enxerga no
+              menu. Desligar um módulo o esconde e bloqueia o acesso pela conta.
+              Painel, Caixa de entrada, Notificações e Configurações ficam
+              sempre disponíveis.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="divide-y divide-border rounded-lg border border-border">
+            {TOGGLEABLE_MODULES.map((m) => {
+              const on = modulesDraft.has(m.key);
+              return (
+                <label
+                  key={m.key}
+                  htmlFor={`mod-${m.key}`}
+                  className="flex cursor-pointer items-center justify-between gap-3 px-3 py-2.5"
+                >
+                  <span className="text-sm font-medium text-foreground">
+                    {m.label}
+                  </span>
+                  <Switch
+                    id={`mod-${m.key}`}
+                    checked={on}
+                    onCheckedChange={(checked) => toggleModule(m.key, checked)}
+                  />
+                </label>
+              );
+            })}
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setModulesTarget(null)}
+              disabled={savingModules}
+            >
+              Cancelar
+            </Button>
+            <Button onClick={saveModules} disabled={savingModules}>
+              {savingModules ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  Salvando…
+                </>
+              ) : (
+                "Salvar módulos"
               )}
             </Button>
           </DialogFooter>

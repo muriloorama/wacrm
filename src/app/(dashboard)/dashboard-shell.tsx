@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { Clock } from "lucide-react";
 import { AuthProvider, useAuth } from "@/hooks/use-auth";
+import { isModuleEnabled } from "@/lib/modules";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
 import { PresenceHeartbeat } from "@/components/presence/presence-heartbeat";
@@ -13,8 +14,22 @@ import { PresenceHeartbeat } from "@/components/presence/presence-heartbeat";
 // client components can't export Next's metadata object.
 
 function DashboardShellInner({ children }: { children: React.ReactNode }) {
-  const { user, loading, profileLoading, accountId, signOut } = useAuth();
+  const { user, loading, profileLoading, accountId, account, signOut } =
+    useAuth();
   const router = useRouter();
+  const pathname = usePathname();
+
+  // Guard de módulo: se a conta ativa tem o módulo desabilitado e o usuário
+  // acessa a rota direto pela URL, redireciona para o Painel. A sidebar já
+  // esconde o link; isto fecha o acesso por URL. O gate é pela CONTA ATIVA
+  // (um super admin operando dentro de uma conta restrita também respeita a
+  // restrição dela). Espera o perfil resolver para não redirecionar durante
+  // o carregamento (quando enabled_modules ainda não chegou).
+  useEffect(() => {
+    if (profileLoading || !account) return;
+    if (isModuleEnabled(pathname, account.enabled_modules)) return;
+    router.replace("/dashboard");
+  }, [pathname, account, profileLoading, router]);
 
   // Sidebar drawer state — only used on mobile. On lg+ the sidebar is
   // always visible and this stays at `false` (ignored by the component).

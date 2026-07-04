@@ -13,6 +13,7 @@
 import { NextResponse } from "next/server";
 
 import { isSuperAdmin } from "@/lib/auth/super-admin";
+import { isValidModuleKey } from "@/lib/modules";
 import { supabaseAdmin } from "@/lib/automations/admin-client";
 import { createClient } from "@/lib/supabase/server";
 
@@ -27,6 +28,8 @@ interface AdminAccountRow {
   created_at: string | null;
   /** Se o super admin logado já é membro desta conta (mostra Entrar/Sair). */
   isMember: boolean;
+  /** Módulos alternáveis habilitados (migration 044). null = todos. */
+  enabled_modules: string[] | null;
 }
 
 // Monta o mapa user_id -> e-mail lendo auth.users em páginas. A API de
@@ -71,7 +74,9 @@ export async function GET() {
       await Promise.all([
         admin
           .from("accounts")
-          .select("id, name, owner_user_id, max_channels, max_users, created_at")
+          .select(
+            "id, name, owner_user_id, max_channels, max_users, created_at, enabled_modules",
+          )
           .order("created_at", { ascending: true }),
         // Associação real: account_members (pós multi-conta). Traz user_id
         // para excluir super admins da contagem e marcar isMember do caller.
@@ -118,6 +123,7 @@ export async function GET() {
         max_channels: number | null;
         max_users: number | null;
         created_at: string | null;
+        enabled_modules: string[] | null;
       };
       return {
         id: row.id,
@@ -131,6 +137,9 @@ export async function GET() {
         max_users: row.max_users ?? 0,
         created_at: row.created_at,
         isMember: callerAccounts.has(row.id),
+        enabled_modules: Array.isArray(row.enabled_modules)
+          ? row.enabled_modules
+          : null,
       };
     });
 
@@ -169,6 +178,7 @@ export async function PATCH(request: Request) {
       name?: unknown;
       max_channels?: unknown;
       max_users?: unknown;
+      enabled_modules?: unknown;
     } | null;
 
     const accountId = body?.accountId;
@@ -191,9 +201,25 @@ export async function PATCH(request: Request) {
       );
     }
 
-    const update: Record<string, number | string> = {};
+    const update: Record<string, number | string | string[] | null> = {};
     if (maxChannels !== null) update.max_channels = maxChannels;
     if (maxUsers !== null) update.max_users = maxUsers;
+
+    // Módulos alternáveis (opcional). null = todos habilitados; array = só as
+    // chaves válidas listadas (deduplicadas). Qualquer outra coisa → 400.
+    if (body?.enabled_modules !== undefined) {
+      const mods = body.enabled_modules;
+      if (mods === null) {
+        update.enabled_modules = null;
+      } else if (Array.isArray(mods) && mods.every(isValidModuleKey)) {
+        update.enabled_modules = [...new Set(mods)];
+      } else {
+        return NextResponse.json(
+          { error: "enabled_modules inválido" },
+          { status: 400 },
+        );
+      }
+    }
     // Nome da conta (opcional).
     if (body?.name !== undefined) {
       if (typeof body.name !== "string" || body.name.trim().length === 0) {
@@ -223,7 +249,7 @@ export async function PATCH(request: Request) {
       .from("accounts")
       .update(update)
       .eq("id", accountId)
-      .select("id, name, max_channels, max_users")
+      .select("id, name, max_channels, max_users, enabled_modules")
       .maybeSingle();
 
     if (error) throw error;
