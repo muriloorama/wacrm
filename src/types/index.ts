@@ -104,6 +104,8 @@ export interface Contact {
   is_group?: boolean;
   /** Origem do lead (id que casa com accounts.origens). null = sem origem. */
   origem?: string | null;
+  /** Nota única editável do contato (migration 046). */
+  notes?: string | null;
   created_at: string;
   updated_at: string;
   /** Hydrated by queries that embed `contact_tags(tags(*))` (e.g. the

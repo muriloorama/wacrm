@@ -2,10 +2,9 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { useAuth } from "@/hooks/use-auth";
 import { formatCurrency } from "@/lib/currency";
 import { toast } from "sonner";
-import type { Contact, Deal, ContactNote, Tag } from "@/types";
+import type { Contact, Deal, Tag, PipelineStage } from "@/types";
 import {
   Phone,
   Mail,
@@ -27,8 +26,6 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
-import { format } from "date-fns";
-import { ptBR } from "date-fns/locale";
 import { SmartAvatar } from "@/components/ui/smart-avatar";
 
 interface ContactSidebarProps {
@@ -36,35 +33,33 @@ interface ContactSidebarProps {
 }
 
 export function ContactSidebar({ contact }: ContactSidebarProps) {
-  const { accountId } = useAuth();
   const [copied, setCopied] = useState(false);
   const [deals, setDeals] = useState<Deal[]>([]);
   // Edição inline do valor de um negócio direto no painel.
   const [editingDealId, setEditingDealId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [savingValue, setSavingValue] = useState(false);
-  const [notes, setNotes] = useState<ContactNote[]>([]);
+  // Etapas disponíveis por funil (para o seletor de estágio dos negócios).
+  const [stagesByPipeline, setStagesByPipeline] = useState<
+    Record<string, PipelineStage[]>
+  >({});
   const [tags, setTags] = useState<(Tag & { contact_tag_id: string })[]>([]);
   const [allTags, setAllTags] = useState<Tag[]>([]);
   const [savingTag, setSavingTag] = useState(false);
-  const [newNote, setNewNote] = useState("");
-  const [addingNote, setAddingNote] = useState(false);
+  // Nota ÚNICA editável do contato (não é mais um log de várias notas).
+  const [noteText, setNoteText] = useState("");
+  const [savingNote, setSavingNote] = useState(false);
 
   const fetchContactData = useCallback(async () => {
     if (!contact) return;
 
     const supabase = createClient();
 
-    // Fetch deals, notes, contact tags, and all account tags in parallel
-    const [dealsRes, notesRes, tagsRes, allTagsRes] = await Promise.all([
+    // Fetch deals, contact tags, and all account tags in parallel
+    const [dealsRes, tagsRes, allTagsRes] = await Promise.all([
       supabase
         .from("deals")
         .select("*, stage:pipeline_stages(*)")
-        .eq("contact_id", contact.id)
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("contact_notes")
-        .select("*")
         .eq("contact_id", contact.id)
         .order("created_at", { ascending: false }),
       supabase
@@ -74,9 +69,29 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
       supabase.from("tags").select("*").order("name"),
     ]);
 
-    if (dealsRes.data) setDeals(dealsRes.data);
-    if (notesRes.data) setNotes(notesRes.data);
+    const dealRows = (dealsRes.data ?? []) as Deal[];
+    if (dealsRes.data) setDeals(dealRows);
     if (allTagsRes.data) setAllTags(allTagsRes.data);
+
+    // Etapas de cada funil envolvido nos negócios deste contato — para o
+    // seletor que permite mover o negócio de estágio direto daqui.
+    const pipelineIds = [
+      ...new Set(dealRows.map((d) => d.pipeline_id).filter(Boolean)),
+    ];
+    if (pipelineIds.length > 0) {
+      const { data: stageRows } = await supabase
+        .from("pipeline_stages")
+        .select("*")
+        .in("pipeline_id", pipelineIds)
+        .order("position", { ascending: true });
+      const byPipe: Record<string, PipelineStage[]> = {};
+      for (const s of (stageRows ?? []) as PipelineStage[]) {
+        (byPipe[s.pipeline_id] ??= []).push(s);
+      }
+      setStagesByPipeline(byPipe);
+    } else {
+      setStagesByPipeline({});
+    }
     if (tagsRes.data) {
       const mapped = tagsRes.data
         .filter((ct: Record<string, unknown>) => ct.tags)
@@ -151,34 +166,31 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
     // fixes the `preserve-manual-memoization` lint error.
   }, [contact]);
 
-  const handleAddNote = useCallback(async () => {
-    if (!contact || !newNote.trim()) return;
-    if (!accountId) return;
-    setAddingNote(true);
+  // Ao trocar de contato, carrega a nota única dele no campo editável.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setNoteText(contact?.notes ?? "");
+  }, [contact?.id, contact?.notes]);
 
+  // Salva a nota ÚNICA (grava em contacts.notes). Chamado no blur do campo.
+  const saveNote = useCallback(async () => {
+    if (!contact) return;
+    const next = noteText.trim();
+    if (next === (contact.notes ?? "").trim()) return; // nada mudou
+    setSavingNote(true);
     const supabase = createClient();
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    const user = session?.user;
-
-    const { data, error } = await supabase
-      .from("contact_notes")
-      .insert({
-        contact_id: contact.id,
-        account_id: accountId,
-        user_id: user?.id,
-        note_text: newNote.trim(),
-      })
-      .select()
-      .single();
-
-    if (!error && data) {
-      setNotes((prev) => [data, ...prev]);
-      setNewNote("");
+    const { error } = await supabase
+      .from("contacts")
+      .update({ notes: next || null })
+      .eq("id", contact.id);
+    setSavingNote(false);
+    if (error) {
+      toast.error("Falha ao salvar a nota");
+      return;
     }
-    setAddingNote(false);
-  }, [contact, newNote, accountId]);
+    // Reflete localmente para o dep de comparação não disparar de novo.
+    contact.notes = next || null;
+  }, [contact, noteText]);
 
   if (!contact) {
     return (
@@ -210,6 +222,36 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
       prev.map((d) => (d.id === dealId ? { ...d, value: parsed } : d)),
     );
     setEditingDealId(null);
+  };
+
+  // Move o negócio para outra etapa do kanban direto daqui (otimista).
+  const changeStage = async (deal: Deal, newStageId: string) => {
+    if (newStageId === deal.stage_id) return;
+    const stages = stagesByPipeline[deal.pipeline_id] ?? [];
+    const newStage = stages.find((s) => s.id === newStageId) ?? null;
+    setDeals((prev) =>
+      prev.map((d) =>
+        d.id === deal.id
+          ? { ...d, stage_id: newStageId, stage: newStage ?? d.stage }
+          : d,
+      ),
+    );
+    const supabase = createClient();
+    const { error } = await supabase
+      .from("deals")
+      .update({ stage_id: newStageId })
+      .eq("id", deal.id);
+    if (error) {
+      toast.error("Falha ao mover o negócio");
+      // rollback
+      setDeals((prev) =>
+        prev.map((d) =>
+          d.id === deal.id
+            ? { ...d, stage_id: deal.stage_id, stage: deal.stage }
+            : d,
+        ),
+      );
+    }
   };
 
   const displayName = contact.name || contact.phone;
@@ -389,17 +431,54 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
                           {formatCurrency(deal.value, deal.currency)}
                         </button>
                       )}
-                      {deal.stage && (
-                        <span
-                          className="shrink-0 rounded-full px-1.5 py-0.5 text-[10px]"
-                          style={{
-                            backgroundColor: `${deal.stage.color}20`,
-                            color: deal.stage.color,
-                          }}
-                        >
-                          {deal.stage.name}
-                        </span>
-                      )}
+                      {(() => {
+                        const stages =
+                          stagesByPipeline[deal.pipeline_id] ?? [];
+                        const cur =
+                          stages.find((s) => s.id === deal.stage_id) ??
+                          deal.stage ??
+                          null;
+                        // Sem etapas carregadas: mostra só o chip (fallback).
+                        if (stages.length === 0) {
+                          return cur ? (
+                            <span
+                              className="shrink-0 rounded-full px-1.5 py-0.5 text-[10px]"
+                              style={{
+                                backgroundColor: `${cur.color}20`,
+                                color: cur.color,
+                              }}
+                            >
+                              {cur.name}
+                            </span>
+                          ) : null;
+                        }
+                        return (
+                          <select
+                            value={deal.stage_id}
+                            onChange={(e) => changeStage(deal, e.target.value)}
+                            title="Mover para outra etapa do funil"
+                            className="shrink-0 cursor-pointer rounded-full border px-2 py-0.5 text-[10px] font-medium outline-none"
+                            style={{
+                              backgroundColor: `${cur?.color ?? "#94a3b8"}20`,
+                              color: cur?.color ?? "var(--foreground)",
+                              borderColor: `${cur?.color ?? "#94a3b8"}40`,
+                            }}
+                          >
+                            {stages.map((s) => (
+                              <option
+                                key={s.id}
+                                value={s.id}
+                                style={{
+                                  color: "var(--foreground)",
+                                  background: "var(--popover)",
+                                }}
+                              >
+                                {s.name}
+                              </option>
+                            ))}
+                          </select>
+                        );
+                      })()}
                     </div>
                   </div>
                 ))
@@ -410,47 +489,30 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
           {/* Divider */}
           <div className="my-4 border-t border-border" />
 
-          {/* Notes */}
+          {/* Nota única do contato — editável, salva ao sair do campo. */}
           <div>
-            <div className="flex items-center gap-2 px-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              <StickyNote className="h-3 w-3" />
-              Notas
-            </div>
-            <div className="mt-2">
-              <div className="flex gap-2">
-                <textarea
-                  value={newNote}
-                  onChange={(e) => setNewNote(e.target.value)}
-                  placeholder="Adicionar uma nota..."
-                  rows={2}
-                  className="flex-1 resize-none rounded-lg border border-border bg-muted px-3 py-2 text-xs text-foreground placeholder-muted-foreground outline-none focus:border-primary/50"
-                />
-                <Button
-                  size="sm"
-                  className="h-auto bg-primary px-2 hover:bg-primary/90"
-                  onClick={handleAddNote}
-                  disabled={!newNote.trim() || addingNote}
-                >
-                  <Plus className="h-3 w-3" />
-                </Button>
+            <div className="flex items-center justify-between px-1">
+              <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                <StickyNote className="h-3 w-3" />
+                Nota
               </div>
-
-              <div className="mt-2 space-y-2">
-                {notes.map((note) => (
-                  <div
-                    key={note.id}
-                    className="rounded-lg bg-muted px-3 py-2"
-                  >
-                    <p className="whitespace-pre-wrap text-xs text-muted-foreground">
-                      {note.note_text}
-                    </p>
-                    <p className="mt-1 text-[10px] text-muted-foreground">
-                      {format(new Date(note.created_at), "d 'de' MMM 'de' yyyy HH:mm", { locale: ptBR })}
-                    </p>
-                  </div>
-                ))}
-              </div>
+              {savingNote && (
+                <span className="text-[10px] text-muted-foreground">
+                  salvando…
+                </span>
+              )}
             </div>
+            <textarea
+              value={noteText}
+              onChange={(e) => setNoteText(e.target.value)}
+              onBlur={saveNote}
+              placeholder="Escreva uma nota sobre este contato..."
+              rows={5}
+              className="mt-2 w-full resize-y rounded-lg border border-border bg-muted px-3 py-2 text-xs text-foreground placeholder-muted-foreground outline-none focus:border-primary/50"
+            />
+            <p className="mt-1 px-1 text-[10px] text-muted-foreground">
+              Salva automaticamente ao clicar fora.
+            </p>
           </div>
         </div>
       </ScrollArea>

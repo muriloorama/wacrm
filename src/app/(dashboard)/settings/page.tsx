@@ -72,8 +72,11 @@ export default function SettingsPage() {
     };
   }, []);
 
+  // "Modelos" só aparece quando CONFIRMAMOS que há conta Meta. Enquanto
+  // metaConfigured é null (carregando) mantemos oculto — assim a seção não
+  // "aparece e some" ao resolver a checagem (evita o flash na troca de aba).
   const hiddenSections: SettingsSection[] =
-    metaConfigured === false ? ['templates'] : [];
+    metaConfigured === true ? [] : ['templates'];
 
   const go = (next: SettingsSection) => {
     const params = new URLSearchParams(searchParams.toString());
