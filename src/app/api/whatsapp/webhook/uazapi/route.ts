@@ -661,7 +661,7 @@ async function processMessage(
     ? data.groupName || "Grupo"
     : data.senderName || phone;
   const contentType = mapContentType(data.messageType);
-  let contentText =
+  const contentText =
     data.text ||
     (data.content && typeof data.content === "object" && "text" in data.content
       ? String((data.content as { text?: unknown }).text ?? "")
@@ -718,10 +718,21 @@ async function processMessage(
     if (dup) return;
   }
 
-  // Timestamp do WhatsApp vem em ms; cai para "agora" se ausente.
-  const createdAt = data.messageTimestamp
-    ? new Date(data.messageTimestamp).toISOString()
-    : new Date().toISOString();
+  // Timestamp do WhatsApp: o uazapi é sobre baileys, que entrega
+  // `messageTimestamp` em SEGUNDOS — mas alguns builds mandam ms. Normaliza
+  // para ambos: valores < 1e12 (i.e. antes de ~2001 se fossem ms) são
+  // segundos e viram ×1000. Data inválida/ausente cai para "agora" — sem
+  // isso, um valor em segundos tratado como ms jogava a mensagem para 1970,
+  // quebrando a ordenação e os separadores de data da thread.
+  const createdAt = (() => {
+    const raw = data.messageTimestamp;
+    const n = typeof raw === "number" ? raw : Number(raw);
+    if (!Number.isFinite(n) || n <= 0) return new Date().toISOString();
+    const d = new Date(n < 1e12 ? n * 1000 : n);
+    return Number.isNaN(d.getTime())
+      ? new Date().toISOString()
+      : d.toISOString();
+  })();
 
   // Insert da mensagem — mesmos campos/valores do webhook da Meta
   // (sender_type:'customer', status:'delivered'). Retorna o id para o

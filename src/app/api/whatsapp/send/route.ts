@@ -221,12 +221,27 @@ async function findOrCreateConversation(
   userId: string,
   contactId: string,
 ): Promise<string | null> {
-  const { data: existing } = await supabase
+  // Um contato pode ter VÁRIAS conversas (uma por canal). O `.maybeSingle()`
+  // sem `.limit(1)` dava erro "multiple rows" nesse caso — e como o erro era
+  // descartado, caía no insert e criava uma conversa duplicada/órfã. Aqui
+  // reusamos a conversa mais recente do contato (sem canal para escolher, a
+  // ativa é a aposta certa) e tratamos o erro explicitamente.
+  const { data: existing, error: lookupError } = await supabase
     .from('conversations')
     .select('id')
     .eq('account_id', accountId)
     .eq('contact_id', contactId)
+    .order('last_message_at', { ascending: false, nullsFirst: false })
+    .limit(1)
     .maybeSingle()
+
+  if (lookupError) {
+    console.error(
+      'Error looking up conversation for contact send:',
+      lookupError.message,
+    )
+    return null
+  }
 
   if (existing) return existing.id
 
