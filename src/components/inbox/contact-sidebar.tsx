@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { useAuth } from "@/hooks/use-auth";
 import { formatCurrency } from "@/lib/currency";
 import { toast } from "sonner";
 import type { Contact, Deal, Tag, PipelineStage } from "@/types";
@@ -33,8 +34,14 @@ interface ContactSidebarProps {
 }
 
 export function ContactSidebar({ contact }: ContactSidebarProps) {
+  const { accountId, defaultCurrency } = useAuth();
   const [copied, setCopied] = useState(false);
   const [deals, setDeals] = useState<Deal[]>([]);
+  // Funil padrão da conta (alvo do botão "criar negócio" quando não há um).
+  const [defaultPipelineId, setDefaultPipelineId] = useState<string | null>(
+    null,
+  );
+  const [creatingDeal, setCreatingDeal] = useState(false);
   // Edição inline do valor de um negócio direto no painel.
   const [editingDealId, setEditingDealId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
@@ -73,10 +80,27 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
     if (dealsRes.data) setDeals(dealRows);
     if (allTagsRes.data) setAllTags(allTagsRes.data);
 
-    // Etapas de cada funil envolvido nos negócios deste contato — para o
-    // seletor que permite mover o negócio de estágio direto daqui.
+    // Funil padrão da conta (o primeiro) — alvo do "criar negócio".
+    let defPipe: string | null = null;
+    if (accountId) {
+      const { data: pipes } = await supabase
+        .from("pipelines")
+        .select("id")
+        .eq("account_id", accountId)
+        .order("created_at", { ascending: true })
+        .limit(1);
+      defPipe = (pipes?.[0]?.id as string) ?? null;
+    }
+    setDefaultPipelineId(defPipe);
+
+    // Etapas dos funis envolvidos (dos negócios + o funil padrão) — para o
+    // seletor de estágio e para o novo negócio já ter suas etapas.
     const pipelineIds = [
-      ...new Set(dealRows.map((d) => d.pipeline_id).filter(Boolean)),
+      ...new Set(
+        [...dealRows.map((d) => d.pipeline_id), defPipe].filter(
+          (x): x is string => !!x,
+        ),
+      ),
     ];
     if (pipelineIds.length > 0) {
       const { data: stageRows } = await supabase
@@ -101,7 +125,7 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
         }));
       setTags(mapped);
     }
-  }, [contact]);
+  }, [contact, accountId]);
 
   const handleAddTag = useCallback(
     async (tag: Tag) => {
@@ -254,6 +278,45 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
     }
   };
 
+  // Cria um negócio já vinculado a este contato, no funil padrão da conta,
+  // na primeira etapa. Aparece na hora na lista (com o seletor de etapa).
+  const createDeal = async () => {
+    if (!contact || !accountId || !defaultPipelineId) return;
+    const stages = stagesByPipeline[defaultPipelineId] ?? [];
+    const firstStage = stages[0];
+    if (!firstStage) {
+      toast.error("O funil não tem etapas configuradas");
+      return;
+    }
+    setCreatingDeal(true);
+    const supabase = createClient();
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    const { data, error } = await supabase
+      .from("deals")
+      .insert({
+        account_id: accountId,
+        user_id: session?.user?.id,
+        pipeline_id: defaultPipelineId,
+        stage_id: firstStage.id,
+        contact_id: contact.id,
+        title: contact.name || contact.phone || "Novo negócio",
+        value: 0,
+        currency: defaultCurrency,
+        status: "open",
+      })
+      .select("*, stage:pipeline_stages(*)")
+      .single();
+    setCreatingDeal(false);
+    if (error || !data) {
+      toast.error("Falha ao criar negócio");
+      return;
+    }
+    setDeals((prev) => [data as Deal, ...prev]);
+    toast.success("Negócio criado");
+  };
+
   const displayName = contact.name || contact.phone;
   const initials = displayName.charAt(0).toUpperCase();
 
@@ -390,13 +453,40 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
 
           {/* Active Deals */}
           <div>
-            <div className="flex items-center gap-2 px-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              <Briefcase className="h-3 w-3" />
-              Negócios ativos
+            <div className="flex items-center justify-between px-1">
+              <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                <Briefcase className="h-3 w-3" />
+                Negócios ativos
+              </div>
+              {defaultPipelineId && deals.length > 0 && (
+                <button
+                  type="button"
+                  onClick={createDeal}
+                  disabled={creatingDeal}
+                  title="Adicionar negócio"
+                  className="flex h-5 w-5 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
+              )}
             </div>
             <div className="mt-2 space-y-2">
               {deals.length === 0 ? (
-                <p className="px-1 text-xs text-muted-foreground">Nenhum negócio</p>
+                defaultPipelineId ? (
+                  <button
+                    type="button"
+                    onClick={createDeal}
+                    disabled={creatingDeal}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-border px-3 py-3 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/50 hover:bg-muted hover:text-foreground disabled:opacity-50"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    {creatingDeal ? "Criando…" : "Adicionar a um negócio"}
+                  </button>
+                ) : (
+                  <p className="px-1 text-xs text-muted-foreground">
+                    Nenhum negócio
+                  </p>
+                )
               ) : (
                 deals.map((deal) => (
                   <div
