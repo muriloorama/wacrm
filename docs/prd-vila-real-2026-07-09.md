@@ -30,7 +30,11 @@ O bug das conversas que não entram no CRM foi diagnosticado e corrigido hoje, e
 
 **Objetivo:** a campanha pode ser ligada amanhã sem queimar verba.
 
-### 0.1 · Conversas novas não entram no CRM — **CORRIGIDO, aguardando confirmação**
+### 0.1 · Conversas novas não entram no CRM — **CORRIGIDO E CONFIRMADO**
+
+> **Prova, 09/07 21:26:** o canal do Guilherme recebeu **14 mensagens de cliente e 18 de
+> atendente** depois da reescrita do webhook — as primeiras desde 04/07. Rafael segue em zero,
+> mas o webhook dele está registrado com `?ch=` corretamente; é ausência de tráfego, não falha.
 
 *Causa raiz:* o uazapi permite duas instâncias com o mesmo nome, e os canais **Rafael Nascimento** (`556593449810`) e **Arquiteto Guilherme Augusto** (`556599358892`) eram ambos `crm-e281ab4a-2`. O webhook resolvia o canal por nome com `.maybeSingle()`, que **retorna erro quando mais de uma linha casa**. O erro era descartado (só se lia `data`), `channel` virava `null` e a mensagem era jogada fora sem log. Quebrou em **04/07**, quando o nome colidiu — daí a suspeita da reunião ("travamento causado pelo CRM antigo") estar errada: o CRM antigo não tem nada com isso.
 
@@ -43,9 +47,10 @@ O bug das conversas que não entram no CRM foi diagnosticado e corrigido hoje, e
 - colisão de nome agora emite `console.error` com os ids, em vez de descartar em silêncio;
 - `webhookUrl()` passa a emitir `?ch=` para todo canal novo.
 
-- [ ] **Confirmar com mensagem real** para `65 9344-9810` ou `65 9935-8892` e checar a chegada no banco. *Sem isso, nada aqui está provado.*
-- [ ] Deploy do código.
-- [ ] Re-registrar `?ch=` também em Lourival e Canal 1 (hoje ainda dependem do nome).
+- [x] Confirmado com mensagem real (Guilherme, 09/07 20:00–21:26).
+- [x] Re-registrado `?ch=` em Lourival e Canal 1. **4 dos 5 canais** já não dependem do nome.
+- [ ] **Jonas fica de fora**: token inválido impede re-registrar o webhook. Ele ainda resolve pelo nome, que por sorte é único. Ver 0.3.
+- [ ] Deploy do código (fallback por `owner` + log de colisão + `?ch=` para canais novos).
 
 ### 0.2 · Teste de ponta a ponta antes de ativar
 
