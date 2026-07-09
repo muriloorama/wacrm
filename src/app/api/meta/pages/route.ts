@@ -80,6 +80,11 @@ export async function GET(request: Request) {
     );
 
     return NextResponse.json({
+      // Devolvido para a tela dizer A QUAL conta a página será ligada.
+      // Um gestor alterna entre contas o dia inteiro; conectar a página da
+      // Vila Real com o Lourival ativo mandaria os leads para o cliente
+      // errado, sem erro nenhum.
+      accountName: ctx.account.name,
       pages: pages.map((p) => {
         const owner = owners.get(p.id);
         return {

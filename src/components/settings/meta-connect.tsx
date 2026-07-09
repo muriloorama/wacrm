@@ -45,6 +45,7 @@ export function MetaConnect() {
   // Etapa 2: só existe logo após o retorno do OAuth.
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [choices, setChoices] = useState<Choice[] | null>(null);
+  const [accountName, setAccountName] = useState<string | null>(null);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
 
@@ -105,8 +106,12 @@ export function MetaConnect() {
           const { error } = await res.json().catch(() => ({ error: '' }));
           throw new Error(error || 'Falha ao listar páginas');
         }
-        const { pages: rows } = (await res.json()) as { pages: Choice[] };
-        setChoices(rows);
+        const data = (await res.json()) as {
+          pages: Choice[];
+          accountName: string | null;
+        };
+        setChoices(data.pages);
+        setAccountName(data.accountName);
         setPicked(new Set());
       } catch (err) {
         toast.error(err instanceof Error ? err.message : 'Falha ao listar páginas');
@@ -195,12 +200,16 @@ export function MetaConnect() {
           <CardContent className="space-y-4 py-4">
             <div>
               <p className="text-sm font-medium">
-                Escolha as páginas desta conta
+                Conectando à conta{' '}
+                <span className="text-primary">{accountName ?? '—'}</span>
               </p>
               <p className="mt-1 text-sm text-muted-foreground">
-                Só as marcadas serão conectadas. Se você administra páginas de
-                outros clientes, deixe-as desmarcadas — elas ficariam ligadas a
-                esta conta e os leads delas cairiam aqui.
+                Os leads das páginas marcadas vão cair nesta conta. Se não for
+                a conta certa, cancele e troque de conta antes de conectar.
+              </p>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Nada vem marcado. Se você administra páginas de outros
+                clientes, deixe-as desmarcadas.
               </p>
             </div>
 
