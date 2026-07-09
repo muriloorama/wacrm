@@ -117,7 +117,8 @@ export function FollowupPanel() {
             <strong>&quot;Follow-up Automático&quot;</strong>. Se o cliente
             responder, vai para <strong>&quot;Respondeu Follow-up&quot;</strong>;
             se continuar sem resposta, vai para{" "}
-            <strong>&quot;Follow-up Manual&quot;</strong> para um toque humano.
+            <strong>&quot;Sem Resposta Follow-up AT&quot;</strong> para um toque
+            humano.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">

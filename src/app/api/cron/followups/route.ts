@@ -12,7 +12,7 @@
 //
 // FASE B (escala/retorno): negócio em "Follow-up Automático" →
 //   - se o cliente respondeu (última msg = 'customer') → "Respondeu Follow-up";
-//   - senão, passadas `followup_hours` desde o envio → "Follow-up Manual".
+//   - senão, passadas `followup_hours` desde o envio → "Sem Resposta Follow-up AT".
 //
 // Segurança: exige CRON_SECRET (ou AUTOMATION_CRON_SECRET). O Vercel Cron
 // manda `Authorization: Bearer <CRON_SECRET>`; um pinger externo pode usar
@@ -35,8 +35,24 @@ const DEFAULT_MSG =
 
 const ST_ORCAMENTO = "Orçamento Enviado";
 const ST_FOLLOWUP = "Follow-up Automático";
-const ST_MANUAL = "Follow-up Manual";
 const ST_RESPONDEU = "Respondeu Follow-up";
+
+// Etapa final da escala. Primeiro nome é o atual; os seguintes são nomes
+// antigos ainda em uso por contas que não foram renomeadas. Sem esse fallback
+// o cron não acha a etapa e para de escalar sem erro nenhum.
+const ST_SEM_RESPOSTA = ["Sem Resposta Follow-up AT", "Follow-up Manual"];
+
+// Primeiro nome que existir no funil. undefined = o funil não tem essa etapa.
+function pickStage(
+  stagesByName: Map<string, string> | undefined,
+  names: readonly string[],
+): string | undefined {
+  for (const name of names) {
+    const id = stagesByName?.get(name);
+    if (id) return id;
+  }
+  return undefined;
+}
 
 function withinBusinessHours(d: Date): boolean {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -260,12 +276,12 @@ export async function GET(request: Request) {
             continue;
           }
 
-          // Sem resposta e passou o prazo → "Follow-up Manual".
+          // Sem resposta e passou o prazo → "Sem Resposta Follow-up AT".
           const lastFu = d.last_followup_at
             ? new Date(d.last_followup_at as string).getTime()
             : 0;
           if (lastFu && lastFu <= cutoffMs) {
-            const dest = pipeMap?.get(ST_MANUAL);
+            const dest = pickStage(pipeMap, ST_SEM_RESPOSTA);
             if (dest) {
               await db
                 .from("deals")
