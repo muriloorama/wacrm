@@ -11,14 +11,15 @@
 //
 // Body:
 //   { phone: string (required, E.164 or local),
-//     name?: string, email?: string, company?: string,
-//     pipeline?: string (default "Formulário"),
-//     value?: number, notes?: string }
+//     name?: string, email?: string, company?: string }
 //
-// Behavior: find-or-create the contact by phone, find-or-create the
-// named pipeline (with default stages) if it doesn't exist yet, then
-// always create a NEW deal in that pipeline's first stage — leads are
-// never deduped as deals, only the contact is.
+// Behavior: find-or-create the contact by phone (same dedupe as the
+// WhatsApp webhook), then — ONLY when the contact is genuinely new —
+// fire the `new_contact_created` automation trigger, exactly like
+// `src/app/api/whatsapp/webhook/route.ts` does. This is what actually
+// applies the account's tag/deal-creation automations (e.g. tag "Novo
+// Lead" + deal in "Funil de Vendas" → "Aguardando Atendimento" on
+// Vila Real) instead of hardcoding a separate pipeline here.
 // ============================================================
 
 import { requireApiKey } from '@/lib/auth/api-context';
@@ -29,14 +30,7 @@ import {
   getContactById,
   ContactError,
 } from '@/lib/api/v1/contacts';
-import {
-  findOrCreatePipelineByName,
-  getFirstStageId,
-  createDeal,
-  DealError,
-} from '@/lib/api/v1/deals';
-
-const DEFAULT_PIPELINE_NAME = 'Formulário';
+import { runAutomationsForTrigger } from '@/lib/automations/engine';
 
 export async function POST(request: Request) {
   try {
@@ -55,19 +49,9 @@ export async function POST(request: Request) {
       return fail('bad_request', "'phone' is required", 400);
     }
 
-    const pipelineName =
-      typeof body.pipeline === 'string' && body.pipeline.trim()
-        ? body.pipeline.trim()
-        : DEFAULT_PIPELINE_NAME;
-
-    const value =
-      typeof body.value === 'number' && Number.isFinite(body.value)
-        ? body.value
-        : undefined;
-
     const auditUserId = await resolveAuditUserId(ctx.supabase, ctx.accountId);
 
-    const { id: contactId } = await findOrCreateContact(
+    const { id: contactId, created } = await findOrCreateContact(
       ctx.supabase,
       ctx.accountId,
       auditUserId,
@@ -79,40 +63,22 @@ export async function POST(request: Request) {
       }
     );
 
-    const pipelineId = await findOrCreatePipelineByName(
-      ctx.supabase,
-      ctx.accountId,
-      auditUserId,
-      pipelineName
-    );
-    const stageId = await getFirstStageId(ctx.supabase, pipelineId);
-
-    const title =
-      typeof body.name === 'string' && body.name.trim()
-        ? `Lead: ${body.name.trim()}`
-        : `Lead: ${phone}`;
-
-    const deal = await createDeal(ctx.supabase, ctx.accountId, auditUserId, {
-      title,
-      contactId,
-      pipelineId,
-      stageId,
-      value,
-      notes: typeof body.notes === 'string' ? body.notes : null,
-    });
+    if (created) {
+      // Fire-and-forget, same as the WhatsApp webhook — never throws.
+      runAutomationsForTrigger({
+        accountId: ctx.accountId,
+        triggerType: 'new_contact_created',
+        contactId,
+      }).catch((err) =>
+        console.error('[api/v1/leads] automation dispatch failed:', err)
+      );
+    }
 
     const contact = await getContactById(ctx.supabase, ctx.accountId, contactId);
 
-    return ok({ deal, contact }, 201);
+    return ok({ contact, created }, created ? 201 : 200);
   } catch (err) {
     if (err instanceof ContactError) {
-      return fail(
-        err.status === 400 ? 'bad_request' : 'internal',
-        err.message,
-        err.status
-      );
-    }
-    if (err instanceof DealError) {
       return fail(
         err.status === 400 ? 'bad_request' : 'internal',
         err.message,
