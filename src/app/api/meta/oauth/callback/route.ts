@@ -41,6 +41,14 @@ function backToSettings(request: Request, params: Record<string, string>) {
 export async function GET(request: Request) {
   const url = new URL(request.url);
 
+  // `verifyState` precisa do app secret para conferir o HMAC e LANÇA se ele
+  // faltar. Sem esta guarda, um callback com state malformado num ambiente
+  // sem a env vira 500 em vez de uma mensagem.
+  if (!process.env.META_APP_SECRET) {
+    console.error('[meta-oauth] META_APP_SECRET não configurado');
+    return backToSettings(request, { meta_error: 'nao_configurado' });
+  }
+
   // O usuário pode ter cancelado no diálogo do Facebook.
   const denied = url.searchParams.get('error');
   if (denied) {

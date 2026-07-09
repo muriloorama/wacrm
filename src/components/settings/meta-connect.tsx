@@ -63,6 +63,7 @@ export function MetaConnect() {
     if (failed) toast.error(`Não conectou: ${failed}`);
     if (error) {
       const msgs: Record<string, string> = {
+        nao_configurado: 'A integração com o Meta não está configurada neste ambiente.',
         state_invalido: 'A sessão de conexão expirou. Tente de novo.',
         nenhuma_pagina: 'Sua conta do Facebook não administra nenhuma página.',
         sem_code: 'O Facebook não devolveu o código de autorização.',
