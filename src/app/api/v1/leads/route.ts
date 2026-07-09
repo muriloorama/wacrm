@@ -17,35 +17,38 @@
 // even as the form's questions change.
 //
 // Behavior: find-or-create the contact by phone (same dedupe as the
-// WhatsApp webhook), then fire the `new_contact_created` automation
-// trigger for EVERY submission — including repeat leads from a phone
-// already on file. This is what actually applies the account's
-// tag/deal-creation automations (e.g. tag "Novo Lead" + deal in
-// "Funil de Vendas" → "Aguardando Atendimento" on Vila Real) instead
-// of hardcoding a separate pipeline here.
-//
-// Deliberately NOT gated on `created`, unlike the WhatsApp webhook:
-// each form submission is treated as a fresh sales opportunity even
-// for a known contact, so a repeat lead still gets a new deal card.
-// This only stays safe because `add_tag` upserts with
-// `ignoreDuplicates` (no error re-tagging an existing contact) and
-// `create_deal` always inserts a new row (never deduped) — see
-// `src/lib/automations/engine.ts`.
+// WhatsApp webhook), tag it "Novo Lead" (additive — never touches
+// tags already on the contact), then ALWAYS create a fresh deal in
+// the account's "Formulário" pipeline (auto-created on first lead)
+// — deliberately its own board, separate from the WhatsApp-driven
+// "Funil de Vendas", so form leads don't get mixed into that pipeline
+// or its automations. Every submission gets a new card, even for a
+// phone already on file — a repeat form fill is still a fresh
+// opportunity to work.
 // ============================================================
 
 import { requireApiKey } from '@/lib/auth/api-context';
 import { ok, fail, toApiErrorResponse } from '@/lib/api/v1/respond';
 import {
   findOrCreateContact,
+  addContactTags,
   resolveAuditUserId,
   getContactById,
   ContactError,
 } from '@/lib/api/v1/contacts';
-import { runAutomationsForTrigger } from '@/lib/automations/engine';
+import {
+  findOrCreatePipelineByName,
+  getFirstStageId,
+  createDeal,
+  DealError,
+} from '@/lib/api/v1/deals';
 import {
   normalizePhone,
   withBrazilCountryCode,
 } from '@/lib/whatsapp/phone-utils';
+
+const LEAD_PIPELINE_NAME = 'Formulário';
+const LEAD_TAG_NAME = 'Novo Lead';
 
 /** First present string field among the given keys, trimmed. */
 function pickString(
@@ -102,39 +105,54 @@ export async function POST(request: Request) {
       );
     }
     const phone = withBrazilCountryCode(normalizePhone(rawPhone));
+    const name = pickString(body, NAME_KEYS);
 
     const auditUserId = await resolveAuditUserId(ctx.supabase, ctx.accountId);
 
-    const { id: contactId, created } = await findOrCreateContact(
+    const { id: contactId } = await findOrCreateContact(
       ctx.supabase,
       ctx.accountId,
       auditUserId,
       {
         phone,
-        name: pickString(body, NAME_KEYS),
+        name,
         email: pickString(body, EMAIL_KEYS),
         company: pickString(body, COMPANY_KEYS),
         notes: buildNoteFromExtraFields(body),
       }
     );
 
-    // Awaited (unlike the WhatsApp webhook's fire-and-forget): this
-    // route has no external ack deadline forcing an early return, and a
-    // detached promise risks the serverless function freezing before it
-    // finishes (the exact bug `after()` works around in the Meta
-    // webhook — see its comment). `runAutomationsForTrigger` never
-    // throws (logs internally), so no try/catch needed here.
-    await runAutomationsForTrigger({
-      accountId: ctx.accountId,
-      triggerType: 'new_contact_created',
+    await addContactTags(ctx.supabase, ctx.accountId, auditUserId, contactId, [
+      LEAD_TAG_NAME,
+    ]);
+
+    const pipelineId = await findOrCreatePipelineByName(
+      ctx.supabase,
+      ctx.accountId,
+      auditUserId,
+      LEAD_PIPELINE_NAME
+    );
+    const stageId = await getFirstStageId(ctx.supabase, pipelineId);
+
+    const deal = await createDeal(ctx.supabase, ctx.accountId, auditUserId, {
+      title: name ? `Lead: ${name}` : `Lead: ${phone}`,
       contactId,
+      pipelineId,
+      stageId,
     });
 
     const contact = await getContactById(ctx.supabase, ctx.accountId, contactId);
 
-    return ok({ contact, created }, created ? 201 : 200);
+    return ok({ contact, deal }, 201);
   } catch (err) {
     if (err instanceof ContactError) {
+      return fail(
+        err.status === 400 ? 'bad_request' : 'internal',
+        err.message,
+        err.status
+      );
+    }
+    if (err instanceof DealError) {
       return fail(
         err.status === 400 ? 'bad_request' : 'internal',
         err.message,

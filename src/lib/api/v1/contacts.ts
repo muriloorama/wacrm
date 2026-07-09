@@ -10,7 +10,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe';
-import { resolveImportTagIds } from '@/lib/contacts/resolve-import-tags';
+import {
+  resolveImportTagIds,
+  assignImportedContactTags,
+} from '@/lib/contacts/resolve-import-tags';
 import { sanitizePhoneForMeta, isValidE164 } from '@/lib/whatsapp/phone-utils';
 
 /** Row select that embeds the contact's tags for serialization. */
@@ -208,6 +211,34 @@ export async function setContactTags(
       .insert(toAdd.map((tag_id) => ({ contact_id: contactId, tag_id })));
     if (error) throw new ContactError('Failed to update contact tags', 500);
   }
+}
+
+/**
+ * ADD tags to a contact without touching any tags it already has —
+ * unlike `setContactTags`, this never removes anything. Missing tag
+ * names are created (admin-equivalent, same as CSV import). Safe to
+ * call repeatedly: `assignImportedContactTags` upserts with
+ * `ignoreDuplicates`.
+ */
+export async function addContactTags(
+  db: SupabaseClient,
+  accountId: string,
+  auditUserId: string,
+  contactId: string,
+  tagNames: string[]
+): Promise<void> {
+  if (tagNames.length === 0) return;
+  const { tagIdByKey } = await resolveImportTagIds(db, {
+    accountId,
+    userId: auditUserId,
+    tagNames,
+    canCreateTags: true,
+  });
+  await assignImportedContactTags(
+    db,
+    [{ contactId, tagNames }],
+    tagIdByKey
+  );
 }
 
 /** Fetch + serialize a single contact scoped to the account, or null. */
