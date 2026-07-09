@@ -17,12 +17,20 @@
 // even as the form's questions change.
 //
 // Behavior: find-or-create the contact by phone (same dedupe as the
-// WhatsApp webhook), then — ONLY when the contact is genuinely new —
-// fire the `new_contact_created` automation trigger, exactly like
-// `src/app/api/whatsapp/webhook/route.ts` does. This is what actually
-// applies the account's tag/deal-creation automations (e.g. tag "Novo
-// Lead" + deal in "Funil de Vendas" → "Aguardando Atendimento" on
-// Vila Real) instead of hardcoding a separate pipeline here.
+// WhatsApp webhook), then fire the `new_contact_created` automation
+// trigger for EVERY submission — including repeat leads from a phone
+// already on file. This is what actually applies the account's
+// tag/deal-creation automations (e.g. tag "Novo Lead" + deal in
+// "Funil de Vendas" → "Aguardando Atendimento" on Vila Real) instead
+// of hardcoding a separate pipeline here.
+//
+// Deliberately NOT gated on `created`, unlike the WhatsApp webhook:
+// each form submission is treated as a fresh sales opportunity even
+// for a known contact, so a repeat lead still gets a new deal card.
+// This only stays safe because `add_tag` upserts with
+// `ignoreDuplicates` (no error re-tagging an existing contact) and
+// `create_deal` always inserts a new row (never deduped) — see
+// `src/lib/automations/engine.ts`.
 // ============================================================
 
 import { requireApiKey } from '@/lib/auth/api-context';
@@ -110,19 +118,17 @@ export async function POST(request: Request) {
       }
     );
 
-    if (created) {
-      // Awaited (unlike the WhatsApp webhook's fire-and-forget): this
-      // route has no external ack deadline forcing an early return, and
-      // a detached promise risks the serverless function freezing before
-      // it finishes (the exact bug `after()` works around in the Meta
-      // webhook — see its comment). `runAutomationsForTrigger` never
-      // throws (logs internally), so no try/catch needed here.
-      await runAutomationsForTrigger({
-        accountId: ctx.accountId,
-        triggerType: 'new_contact_created',
-        contactId,
-      });
-    }
+    // Awaited (unlike the WhatsApp webhook's fire-and-forget): this
+    // route has no external ack deadline forcing an early return, and a
+    // detached promise risks the serverless function freezing before it
+    // finishes (the exact bug `after()` works around in the Meta
+    // webhook — see its comment). `runAutomationsForTrigger` never
+    // throws (logs internally), so no try/catch needed here.
+    await runAutomationsForTrigger({
+      accountId: ctx.accountId,
+      triggerType: 'new_contact_created',
+      contactId,
+    });
 
     const contact = await getContactById(ctx.supabase, ctx.accountId, contactId);
 
