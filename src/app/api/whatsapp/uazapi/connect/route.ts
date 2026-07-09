@@ -44,11 +44,14 @@ async function resolveAccountId(
   return (data?.account_id as string) ?? null;
 }
 
-function webhookUrl(request: Request): string {
+// O `ch` amarra a instância ao canal. Sem ele o webhook precisa adivinhar de
+// quem é a mensagem pelo nome da instância — e o uazapi aceita duas instâncias
+// com o mesmo nome, o que já fez mensagens serem descartadas.
+function webhookUrl(request: Request, channelId: string): string {
   const base = (
     process.env.NEXT_PUBLIC_SITE_URL || new URL(request.url).origin
   ).replace(/\/+$/, "");
-  return `${base}/api/whatsapp/webhook/uazapi`;
+  return `${base}/api/whatsapp/webhook/uazapi?ch=${channelId}`;
 }
 
 /**
@@ -105,7 +108,7 @@ export async function POST(request: Request) {
 
       const token = decrypt(channel.uazapi_instance_token as string);
       try {
-        await setInstanceWebhook(token, webhookUrl(request));
+        await setInstanceWebhook(token, webhookUrl(request, channel.id));
       } catch {
         // não bloqueia o QR se o registro do webhook falhar
       }
@@ -187,7 +190,7 @@ export async function POST(request: Request) {
     }
 
     try {
-      await setInstanceWebhook(token, webhookUrl(request));
+      await setInstanceWebhook(token, webhookUrl(request, channelId));
     } catch {
       // não bloqueia o QR se o registro do webhook falhar
     }

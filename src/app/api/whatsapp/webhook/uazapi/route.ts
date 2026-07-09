@@ -187,6 +187,27 @@ async function processWebhook(
     channel = (byInstance as ChannelRow) ?? null;
   }
 
+  // Fallback pelo TELEFONE dono da instância. O uazapi permite duas instâncias
+  // com o mesmo nome, então o nome não identifica um canal; `owner` sim. Vem
+  // antes do nome justamente para desempatar esses casos.
+  if (!channel && body.owner) {
+    const { data: byOwner } = await db
+      .from("whatsapp_channels")
+      .select(CHANNEL_COLS)
+      .eq("phone", body.owner)
+      .limit(2);
+    const rows = (byOwner ?? []) as ChannelRow[];
+    if (rows.length === 1) channel = rows[0];
+    else if (rows.length > 1) {
+      console.error(
+        "[uazapi-webhook] telefone em mais de um canal — owner:",
+        body.owner,
+        "| canais:",
+        rows.map((r) => r.id),
+      );
+    }
+  }
+
   // Fallback por NOME da instância uazapi (uazapi_instance_name). Canais
   // MIGRADOS do sistema antigo têm nomes legados ("crm-<user>-N") que não
   // batem com o padrão channel-/account-; o uazapi manda esse nome em
@@ -198,8 +219,19 @@ async function processWebhook(
         .from("whatsapp_channels")
         .select(CHANNEL_COLS)
         .eq("uazapi_instance_name", candidate)
-        .maybeSingle();
-      channel = (byName as ChannelRow) ?? null;
+        .limit(2);
+      const rows = (byName ?? []) as ChannelRow[];
+      if (rows.length === 1) channel = rows[0];
+      else if (rows.length > 1) {
+        // Nome ambíguo e sem `owner` para desempatar: escolher qualquer um
+        // entregaria a mensagem no canal errado. Melhor não entregar.
+        console.error(
+          "[uazapi-webhook] nome de instância ambíguo — instanceName:",
+          candidate,
+          "| canais:",
+          rows.map((r) => r.id),
+        );
+      }
     }
   }
 
@@ -207,6 +239,8 @@ async function processWebhook(
     console.warn(
       "[uazapi-webhook] canal não resolvido — instanceName:",
       instanceName,
+      "| owner:",
+      body.owner,
     );
     return;
   }
