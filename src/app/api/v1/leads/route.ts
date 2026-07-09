@@ -111,14 +111,17 @@ export async function POST(request: Request) {
     );
 
     if (created) {
-      // Fire-and-forget, same as the WhatsApp webhook — never throws.
-      runAutomationsForTrigger({
+      // Awaited (unlike the WhatsApp webhook's fire-and-forget): this
+      // route has no external ack deadline forcing an early return, and
+      // a detached promise risks the serverless function freezing before
+      // it finishes (the exact bug `after()` works around in the Meta
+      // webhook — see its comment). `runAutomationsForTrigger` never
+      // throws (logs internally), so no try/catch needed here.
+      await runAutomationsForTrigger({
         accountId: ctx.accountId,
         triggerType: 'new_contact_created',
         contactId,
-      }).catch((err) =>
-        console.error('[api/v1/leads] automation dispatch failed:', err)
-      );
+      });
     }
 
     const contact = await getContactById(ctx.supabase, ctx.accountId, contactId);
