@@ -30,6 +30,7 @@ import {
   Mail,
   MailX,
   Plus,
+  Radio,
   Trash2,
   UsersRound,
 } from 'lucide-react';
@@ -73,6 +74,7 @@ import {
   PresenceDot,
 } from '@/components/presence/presence-dot';
 import { InviteMemberDialog } from './invite-member-dialog';
+import { MemberChannelsDialog } from './member-channels-dialog';
 import { SettingsPanelHead } from './settings-panel-head';
 import { ROLE_META } from './role-meta';
 
@@ -135,6 +137,7 @@ export function MembersTab() {
   const [loading, setLoading] = useState(true);
 
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [channelsFor, setChannelsFor] = useState<Member | null>(null);
   const [removingMember, setRemovingMember] = useState<Member | null>(null);
   const [pendingMemberAction, setPendingMemberAction] = useState<string | null>(
     null,
@@ -514,6 +517,28 @@ export function MembersTab() {
                       </button>
                     )}
 
+                    {/* Quais canais este membro enxerga. owner/admin veem
+                        todos por definição — o diálogo abre só-leitura e
+                        diz isso, em vez de fingir um controle inexistente. */}
+                    {canManageMembers && (
+                      <button
+                        type="button"
+                        onClick={() => setChannelsFor(member)}
+                        disabled={isBusy}
+                        title={
+                          member.role === "owner" || member.role === "admin"
+                            ? "Vê todos os canais (admin)"
+                            : "Escolher os canais que este membro vê"
+                        }
+                        className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/60 disabled:opacity-50"
+                      >
+                        <Radio className="size-3.5" />
+                        {member.role === "owner" || member.role === "admin"
+                          ? "Todos os canais"
+                          : "Canais"}
+                      </button>
+                    )}
+
                     {/* Remove. Admin+ only; never on the owner row;
                         never on yourself. Pre-polish styling was
                         neutral-default + red-on-hover — the
@@ -635,6 +660,16 @@ export function MembersTab() {
         onOpenChange={setInviteOpen}
         onCreated={loadEverything}
       />
+
+      {channelsFor && (
+        <MemberChannelsDialog
+          open
+          onOpenChange={(next) => !next && setChannelsFor(null)}
+          userId={channelsFor.user_id}
+          memberName={channelsFor.full_name || channelsFor.email || 'membro'}
+          role={channelsFor.role}
+        />
+      )}
 
       <Dialog
         open={removingMember !== null}
