@@ -288,30 +288,56 @@ de OAuth, igual em espírito ao QR do WhatsApp:
 
 **Configurações → Formulários do Meta → "Conectar Facebook"** →
 `GET /api/meta/oauth/start` (admin+, emite um `state` assinado com o accountId) →
-diálogo do Meta → `GET /api/meta/oauth/callback` → troca o `code` por um user token longo,
-lista as páginas do usuário, **assina o campo `leadgen` de cada uma**
-(`POST /{page_id}/subscribed_apps`) e grava `meta_pages` com o token cifrado.
+diálogo do Meta → `GET /api/meta/oauth/callback`, que **não grava nada**: troca o `code` por um
+user token longo, guarda-o cifrado em `meta_oauth_sessions` (15 min) e abre a **tela de escolha
+das páginas** → `POST /api/meta/pages` conecta **apenas as marcadas**, assinando o `leadgen` de
+cada uma (`POST /{page_id}/subscribed_apps`).
 
 O admin nunca vê nem copia segredo nenhum. Escopos: `pages_show_list`,
 `pages_read_engagement`, `pages_manage_metadata`, `leads_retrieval`.
+
+> **Por que a tela de escolha existe.** Quem conecta é **sempre um gestor de tráfego**, e ele
+> administra as páginas de **vários clientes**. A primeira versão conectava tudo o que o
+> Facebook devolvia: as páginas dos outros clientes ficariam ligadas a esta conta e os leads
+> deles cairiam aqui. Nada vem marcado por padrão, e a tela anuncia **a conta de destino** —
+> um gestor alterna de conta o dia inteiro, e conectar a página da Vila Real com o Lourival
+> ativo mandaria os leads para o cliente errado, sem erro nenhum.
 
 Detalhes que valem registro:
 - **O `state` é HMAC-assinado** e vale 15 min. Sem isso, alguém chamaria o callback com o
   `accountId` de outra conta e plantaria a própria página lá dentro. Coberto por teste
   (`src/lib/meta/oauth.test.ts`), incluindo o ataque de reusar o MAC trocando o payload.
-- **`page_id` é chave primária global.** O callback recusa conectar uma página que já
-  pertence a outra conta — senão um upsert a sequestraria, e os leads dela cairiam na conta
-  errada. Reconectar a mesma conta continua permitido (renova o token).
-- **Assina antes de gravar.** Se o Meta recusar a assinatura, a página não entra no banco;
-  do contrário ficaria uma linha que nunca receberia webhook.
-- **Não há `INSERT` pela UI** (policy só de `SELECT` e `DELETE`, migration `050`). Um `INSERT`
-  livre deixaria um admin apontar `page_id` alheio para a própria conta.
+- **`page_id` é chave primária global.** Página que já pertence a outra conta é recusada —
+  senão um upsert a sequestraria. Reconectar a mesma conta continua permitido (renova o token).
+- **O corpo da requisição não é fonte de verdade:** o `POST` reconfere no Facebook quais
+  páginas aquele usuário realmente administra antes de conectar.
+- **Assina antes de gravar.** Se o Meta recusar a assinatura, a página não entra no banco.
+- **`meta_oauth_sessions` tem RLS ligada e zero policies:** nem o cliente do usuário lê o
+  token; só as rotas, com service-role, e elas conferem o dono da sessão. Uso único.
+- **Não há `INSERT` pela UI** em `meta_pages` (migration `050`: só `SELECT` e `DELETE`).
+
+> **Bug encontrado no caminho:** o painel usava `useSearchParams`, que **suspende a árvore de
+> Client Components** até o `Suspense` mais próximo. Não havia nenhum, e a página de
+> Configurações inteira ficava inerte. Lido de `window.location` num efeito client-only.
+> O `AGENTS.md` avisa que esta versão do Next tem mudanças e manda ler os docs antes — o
+> hook foi escrito de memória.
 
 ### Falta para amanhã (tudo configuração, nada de código)
-- [ ] Na Vercel: `META_APP_ID`, `META_APP_SECRET` (**está vazio hoje**) e `META_VERIFY_TOKEN`. São do **app**, valem para todos os clientes.
-- [ ] No app do Meta: cadastrar o redirect `https://super-crm.pro/api/meta/oauth/callback` e o webhook `https://super-crm.pro/api/webhooks/meta/leadgen` (campo `leadgen`).
-- [ ] O cliente (ou você, como admin da conta) clica em **Conectar Facebook**. Isso substitui entregar webhook e token para a Mayara.
+- [x] Na Vercel: `META_APP_ID`, `META_APP_SECRET`, `META_VERIFY_TOKEN` (app `1523825368789306`, "App Super CRM"). Handshake confirmado contra a produção: ecoa o `hub.challenge` em `text/plain`.
+- [x] Redirect `https://super-crm.pro/api/meta/oauth/callback` validado no painel do Meta (check verde).
+- [ ] No app do Meta: adicionar o produto **Webhooks**, objeto **Página**, callback `https://super-crm.pro/api/webhooks/meta/leadgen`, e **marcar o campo `leadgen`**.
+- [ ] Clicar em **Conectar Facebook** e marcar **só** a página da Vila Real.
 - [ ] Teste com lead real antes de ativar.
+
+**Quem pode conectar.** Enquanto o app estiver em **modo de Desenvolvimento**, só **admin,
+desenvolvedor ou testador do app** consegue autorizar — e isso basta, sem App Review. Para o
+gestor conectar sozinho, adicione-o em *Funções do app → Testadores*; o caminho definitivo é
+App Review (`leads_retrieval`, `pages_manage_metadata`) + verificação de negócio, que leva dias.
+
+`momenton10@gmail.com` (perfil cadastrado como **"Mauricio"**, confirmar se é a Mayara) já é
+`admin` da Vila Real e `owner` do Lourival — não precisa de convite, só de função no app do Meta.
+
+**Rotacionar o `META_APP_SECRET`** depois que a campanha estabilizar: ele foi colado no chat.
 
 **Não testado de verdade:** a chamada à Graph API só foi exercitada com token falso (falha esperada, `OAuthException` code 190). O caminho feliz — `field_data` → contato → card — **nunca rodou com um lead real**. Os nomes de campo (`full_name`, `phone_number`) são o padrão do Meta, mas se o formulário da Vila Real usar rótulos customizados, o `pick()` não acha o telefone e o lead é descartado com log. **Conferir os nomes dos campos do formulário antes de ativar.**
 
