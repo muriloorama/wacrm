@@ -10,7 +10,6 @@
 // ============================================================
 
 import { useCallback, useEffect, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
 import { ClipboardList, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -29,7 +28,6 @@ export function MetaConnect() {
   const [configured, setConfigured] = useState(true);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
-  const params = useSearchParams();
 
   const load = useCallback(async () => {
     try {
@@ -50,7 +48,13 @@ export function MetaConnect() {
   }, [load]);
 
   // Retorno do OAuth: o callback devolve o resultado na querystring.
+  //
+  // Lido de `window.location` de propósito, e não com `useSearchParams`:
+  // esse hook SUSPENDE a árvore até o `Suspense` mais próximo, e não há um
+  // aqui — o painel inteiro travava. Só interessa o valor da primeira
+  // renderização, então um efeito client-only basta.
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
     const connected = params.get('meta_connected');
     const failed = params.get('meta_failed');
     const error = params.get('meta_error');
@@ -72,7 +76,12 @@ export function MetaConnect() {
       };
       toast.error(msgs[error] ?? `Erro do Facebook: ${error}`);
     }
-  }, [params]);
+
+    // Limpa o resultado da URL para o toast não voltar a cada refresh.
+    if (connected || failed || error) {
+      window.history.replaceState({}, '', '/settings?tab=meta');
+    }
+  }, []);
 
   async function disconnect(page: Page) {
     setBusy(page.page_id);
