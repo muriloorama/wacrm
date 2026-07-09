@@ -1,30 +1,25 @@
 // ============================================================
 // GET /api/meta/oauth/callback — o Facebook devolve o usuário aqui.
 //
-// Troca o `code` por um user token longo, lista as páginas que ele
-// administra, grava cada uma em `meta_pages` (token cifrado) e assina o
-// campo `leadgen` de cada página. É isso que substitui o INSERT manual
-// por cliente.
+// NÃO conecta nada. Troca o `code` por um user token longo, guarda-o
+// cifrado numa sessão de 15 min e manda o navegador para a tela de
+// escolha das páginas.
 //
-// A conta NÃO vem da sessão: vem do `state` assinado emitido no /start.
-// Assim o callback não depende de cookie e não pode ser apontado para a
-// conta de outro.
+// Por que não conectar direto: quem conecta é o gestor de tráfego, e ele
+// administra as páginas de vários clientes. Conectar tudo o que o
+// Facebook devolve ligaria as páginas dos outros clientes a esta conta —
+// e os leads deles cairiam aqui.
 //
-// Erros voltam para /settings como querystring, porque quem está aqui é
-// um navegador, não um cliente de API.
+// A conta NÃO vem da sessão do CRM: vem do `state` assinado emitido no
+// /start. Assim o callback não depende de cookie e não pode ser apontado
+// para a conta de outro.
 // ============================================================
 
 import { NextResponse } from 'next/server';
 
 import { supabaseAdmin } from '@/lib/automations/admin-client';
 import { encrypt } from '@/lib/whatsapp/encryption';
-import {
-  exchangeCode,
-  listPages,
-  subscribePageToLeadgen,
-  toLongLivedToken,
-  verifyState,
-} from '@/lib/meta/oauth';
+import { exchangeCode, toLongLivedToken, verifyState } from '@/lib/meta/oauth';
 
 export const dynamic = 'force-dynamic';
 
@@ -51,9 +46,7 @@ export async function GET(request: Request) {
 
   // O usuário pode ter cancelado no diálogo do Facebook.
   const denied = url.searchParams.get('error');
-  if (denied) {
-    return backToSettings(request, { meta_error: denied });
-  }
+  if (denied) return backToSettings(request, { meta_error: denied });
 
   const session = verifyState(url.searchParams.get('state'));
   if (!session) {
@@ -66,69 +59,24 @@ export async function GET(request: Request) {
 
   try {
     const longLived = await toLongLivedToken(await exchangeCode(code, request));
-    const pages = await listPages(longLived);
-
-    if (pages.length === 0) {
-      return backToSettings(request, { meta_error: 'nenhuma_pagina' });
-    }
 
     const db = supabaseAdmin();
-    let connected = 0;
-    const failed: string[] = [];
+    const { data, error } = await db
+      .from('meta_oauth_sessions')
+      .insert({
+        account_id: session.accountId,
+        user_id: session.userId,
+        user_token: encrypt(longLived),
+      })
+      .select('id')
+      .single();
 
-    for (const page of pages) {
-      // `page_id` é chave primária global. Sem esta checagem, um admin da
-      // conta A que administre uma página já ligada à conta B a puxaria
-      // para si num upsert — e os leads dela passariam a cair na conta
-      // errada. Reconectar a MESMA conta continua permitido (renova token).
-      const { data: owner } = await db
-        .from('meta_pages')
-        .select('account_id')
-        .eq('page_id', page.id)
-        .maybeSingle();
-
-      if (owner && owner.account_id !== session.accountId) {
-        console.error(
-          '[meta-oauth] página já pertence a outra conta:',
-          page.id,
-        );
-        failed.push(`${page.name} (já ligada a outra conta)`);
-        continue;
-      }
-
-      // Assinar ANTES de gravar: se o Meta recusar, não deixamos uma
-      // página no banco que nunca vai receber webhook.
-      try {
-        await subscribePageToLeadgen(page.id, page.access_token);
-      } catch (err) {
-        console.error('[meta-oauth] falha ao assinar leadgen:', page.id, err);
-        failed.push(page.name);
-        continue;
-      }
-
-      const { error } = await db.from('meta_pages').upsert(
-        {
-          page_id: page.id,
-          account_id: session.accountId,
-          page_name: page.name,
-          page_access_token: encrypt(page.access_token),
-          created_by: session.userId,
-        },
-        { onConflict: 'page_id' },
-      );
-
-      if (error) {
-        console.error('[meta-oauth] falha ao gravar página:', page.id, error);
-        failed.push(page.name);
-        continue;
-      }
-      connected++;
+    if (error || !data) {
+      console.error('[meta-oauth] falha ao gravar sessão:', error);
+      return backToSettings(request, { meta_error: 'falha_na_sessao' });
     }
 
-    return backToSettings(request, {
-      meta_connected: String(connected),
-      ...(failed.length > 0 ? { meta_failed: failed.join(', ') } : {}),
-    });
+    return backToSettings(request, { meta_session: data.id as string });
   } catch (err) {
     console.error('[meta-oauth] erro no callback:', err);
     return backToSettings(request, { meta_error: 'falha_na_troca' });
