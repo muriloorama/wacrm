@@ -98,6 +98,9 @@ export interface ContactInput {
   name?: string | null;
   email?: string | null;
   company?: string | null;
+  /** Only applied when the contact is newly created — never overwrites
+   *  an existing contact's manually-edited note on a repeat submission. */
+  notes?: string | null;
 }
 
 /**
@@ -132,6 +135,7 @@ export async function findOrCreateContact(
       name: input.name ?? sanitized,
       email: input.email ?? null,
       company: input.company ?? null,
+      notes: input.notes ?? null,
     })
     .select('id')
     .single();

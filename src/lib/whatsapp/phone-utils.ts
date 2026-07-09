@@ -41,6 +41,24 @@ export function isValidE164(phone: string): boolean {
 }
 
 /**
+ * Prepend Brazil's country code (55) to a local-format number that's
+ * missing it — e.g. a lead-gen form sending "(65) 9 5662-0000" (DDD +
+ * 8/9-digit number, 10-11 digits) instead of "+55 65 99566-20000".
+ * Digits-only input required (run through `sanitizePhoneForMeta` /
+ * `normalizePhone` first). Numbers that already look international
+ * (12+ digits, or already start with "55" at a length consistent with
+ * a BR number) are returned unchanged — this only fixes the common
+ * "country code omitted" case, it doesn't try to detect every locale.
+ */
+export function withBrazilCountryCode(digitsOnly: string): string {
+  if (!digitsOnly) return digitsOnly
+  if (digitsOnly.length === 10 || digitsOnly.length === 11) {
+    return `55${digitsOnly}`
+  }
+  return digitsOnly
+}
+
+/**
  * Generate plausible phone number variants for retry when Meta's
  * sandbox rejects a number with error #131030 ("not in allowed list").
  *

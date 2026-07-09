@@ -9,9 +9,12 @@
 // to `ctx.accountId`, the same discipline every other v1 route
 // follows.
 //
-// Body:
-//   { phone: string (required, E.164 or local),
-//     name?: string, email?: string, company?: string }
+// Accepts both English and the Portuguese field names the actual
+// lead-gen form sends (`nome`/`whatsapp` etc.), and a local BR phone
+// (no country code, e.g. "(65) 9 5662-0000") — normalized to E.164
+// before dedupe. Any other fields in the body (urgência, investimento,
+// ...) are folded into the new contact's note so nothing is dropped
+// even as the form's questions change.
 //
 // Behavior: find-or-create the contact by phone (same dedupe as the
 // WhatsApp webhook), then — ONLY when the contact is genuinely new —
@@ -31,6 +34,44 @@ import {
   ContactError,
 } from '@/lib/api/v1/contacts';
 import { runAutomationsForTrigger } from '@/lib/automations/engine';
+import {
+  normalizePhone,
+  withBrazilCountryCode,
+} from '@/lib/whatsapp/phone-utils';
+
+/** First present string field among the given keys, trimmed. */
+function pickString(
+  body: Record<string, unknown>,
+  keys: string[]
+): string | undefined {
+  for (const key of keys) {
+    const v = body[key];
+    if (typeof v === 'string' && v.trim()) return v.trim();
+  }
+  return undefined;
+}
+
+const PHONE_KEYS = ['phone', 'whatsapp', 'telefone', 'celular'];
+const NAME_KEYS = ['name', 'nome'];
+const EMAIL_KEYS = ['email', 'e-mail'];
+const COMPANY_KEYS = ['company', 'empresa'];
+const KNOWN_KEYS = new Set([
+  ...PHONE_KEYS,
+  ...NAME_KEYS,
+  ...EMAIL_KEYS,
+  ...COMPANY_KEYS,
+]);
+
+/** Fold any body fields not already mapped to a contact column into a note. */
+function buildNoteFromExtraFields(body: Record<string, unknown>): string | null {
+  const lines: string[] = [];
+  for (const [key, value] of Object.entries(body)) {
+    if (KNOWN_KEYS.has(key)) continue;
+    if (typeof value !== 'string' || !value.trim()) continue;
+    lines.push(`${key}: ${value.trim()}`);
+  }
+  return lines.length > 0 ? lines.join('\n') : null;
+}
 
 export async function POST(request: Request) {
   try {
@@ -44,10 +85,15 @@ export async function POST(request: Request) {
       return fail('bad_request', 'Request body must be a JSON object', 400);
     }
 
-    const phone = typeof body.phone === 'string' ? body.phone.trim() : '';
-    if (!phone) {
-      return fail('bad_request', "'phone' is required", 400);
+    const rawPhone = pickString(body, PHONE_KEYS);
+    if (!rawPhone) {
+      return fail(
+        'bad_request',
+        "One of 'phone', 'whatsapp', 'telefone' or 'celular' is required",
+        400
+      );
     }
+    const phone = withBrazilCountryCode(normalizePhone(rawPhone));
 
     const auditUserId = await resolveAuditUserId(ctx.supabase, ctx.accountId);
 
@@ -57,9 +103,10 @@ export async function POST(request: Request) {
       auditUserId,
       {
         phone,
-        name: typeof body.name === 'string' ? body.name : undefined,
-        email: typeof body.email === 'string' ? body.email : undefined,
-        company: typeof body.company === 'string' ? body.company : undefined,
+        name: pickString(body, NAME_KEYS),
+        email: pickString(body, EMAIL_KEYS),
+        company: pickString(body, COMPANY_KEYS),
+        notes: buildNoteFromExtraFields(body),
       }
     );
 
