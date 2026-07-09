@@ -16,39 +16,17 @@
 // ...) are folded into the new contact's note so nothing is dropped
 // even as the form's questions change.
 //
-// Behavior: find-or-create the contact by phone (same dedupe as the
-// WhatsApp webhook), tag it "Novo Lead" (additive — never touches
-// tags already on the contact), then ALWAYS create a fresh deal in
-// the account's "Formulário" pipeline (auto-created on first lead)
-// — deliberately its own board, separate from the WhatsApp-driven
-// "Funil de Vendas", so form leads don't get mixed into that pipeline
-// or its automations. Every submission gets a new card, even for a
-// phone already on file — a repeat form fill is still a fresh
-// opportunity to work.
+// Behavior: see `ingestLead` in src/lib/api/v1/leads.ts — shared with
+// the Meta Lead Ads webhook. Since 09/07/2026 the lead lands in the
+// account's single "Funil de Vendas" (the separate "Formulário" board
+// was dropped by decision) and gets origem='formulario'.
 // ============================================================
 
 import { requireApiKey } from '@/lib/auth/api-context';
 import { ok, fail, toApiErrorResponse } from '@/lib/api/v1/respond';
-import {
-  findOrCreateContact,
-  addContactTags,
-  resolveAuditUserId,
-  getContactById,
-  ContactError,
-} from '@/lib/api/v1/contacts';
-import {
-  findOrCreatePipelineByName,
-  getFirstStageId,
-  createDeal,
-  DealError,
-} from '@/lib/api/v1/deals';
-import {
-  normalizePhone,
-  withBrazilCountryCode,
-} from '@/lib/whatsapp/phone-utils';
-
-const LEAD_PIPELINE_NAME = 'Formulário';
-const LEAD_TAG_NAME = 'Novo Lead';
+import { ingestLead } from '@/lib/api/v1/leads';
+import { ContactError } from '@/lib/api/v1/contacts';
+import { DealError } from '@/lib/api/v1/deals';
 
 /** First present string field among the given keys, trimmed. */
 function pickString(
@@ -104,44 +82,14 @@ export async function POST(request: Request) {
         400
       );
     }
-    const phone = withBrazilCountryCode(normalizePhone(rawPhone));
-    const name = pickString(body, NAME_KEYS);
 
-    const auditUserId = await resolveAuditUserId(ctx.supabase, ctx.accountId);
-
-    const { id: contactId } = await findOrCreateContact(
-      ctx.supabase,
-      ctx.accountId,
-      auditUserId,
-      {
-        phone,
-        name,
-        email: pickString(body, EMAIL_KEYS),
-        company: pickString(body, COMPANY_KEYS),
-        notes: buildNoteFromExtraFields(body),
-      }
-    );
-
-    await addContactTags(ctx.supabase, ctx.accountId, auditUserId, contactId, [
-      LEAD_TAG_NAME,
-    ]);
-
-    const pipelineId = await findOrCreatePipelineByName(
-      ctx.supabase,
-      ctx.accountId,
-      auditUserId,
-      LEAD_PIPELINE_NAME
-    );
-    const stageId = await getFirstStageId(ctx.supabase, pipelineId);
-
-    const deal = await createDeal(ctx.supabase, ctx.accountId, auditUserId, {
-      title: name ? `Lead: ${name}` : `Lead: ${phone}`,
-      contactId,
-      pipelineId,
-      stageId,
+    const { contact, deal } = await ingestLead(ctx.supabase, ctx.accountId, {
+      phone: rawPhone,
+      name: pickString(body, NAME_KEYS),
+      email: pickString(body, EMAIL_KEYS),
+      company: pickString(body, COMPANY_KEYS),
+      notes: buildNoteFromExtraFields(body),
     });
-
-    const contact = await getContactById(ctx.supabase, ctx.accountId, contactId);
 
     return ok({ contact, deal }, 201);
   } catch (err) {
