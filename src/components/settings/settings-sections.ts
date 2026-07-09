@@ -1,5 +1,6 @@
 import {
   Coins,
+  ClipboardList,
   FileText,
   KeyRound,
   LayoutGrid,
@@ -27,6 +28,7 @@ export const SETTINGS_SECTIONS = [
   'security',
   'appearance',
   'whatsapp',
+  'meta',
   'templates',
   'fields',
   'deals',
@@ -53,6 +55,7 @@ export const SECTION_META: Record<SettingsSection, SectionMeta> = {
   security: { id: 'security', label: 'Login e segurança', icon: Shield, group: 'account' },
   appearance: { id: 'appearance', label: 'Aparência', icon: Palette, group: 'account' },
   whatsapp: { id: 'whatsapp', label: 'WhatsApp', icon: PlugZap, group: 'workspace' },
+  meta: { id: 'meta', label: 'Formulários do Meta', icon: ClipboardList, group: 'workspace' },
   templates: { id: 'templates', label: 'Modelos', icon: FileText, group: 'workspace' },
   fields: { id: 'fields', label: 'Campos e etiquetas', icon: Tags, group: 'workspace' },
   deals: { id: 'deals', label: 'Negócios e moeda', icon: Coins, group: 'workspace' },

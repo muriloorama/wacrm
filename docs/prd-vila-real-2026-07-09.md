@@ -280,13 +280,37 @@ Decisões de projeto que valem registro:
 - **500 de propósito em falha transitória.** Perder um lead pago é pior que uma retentativa.
 - **Dedupe por `leadgen_id`** antes de qualquer trabalho, porque o Meta reentrega.
 
-### Falta para amanhã
-- [ ] `META_APP_SECRET` **está vazio** no `.env.local` e precisa ser preenchido na Vercel (Meta for Developers → App Settings → Basic).
-- [ ] `META_VERIFY_TOKEN` na Vercel (string à sua escolha; a mesma vai no Facebook).
-- [ ] Inserir a linha em `meta_pages`: `page_id` da página da Vila Real → `account_id`, com o **page access token** cifrado. *Não há UI para isso ainda — hoje é `INSERT` manual.*
-- [ ] Deploy.
-- [ ] Entregar à Mayara: `https://super-crm.pro/api/webhooks/meta/leadgen` + o verify token.
-- [ ] Assinar o campo `leadgen` da página no app do Meta.
+### Conexão por cliente: OAuth, não `INSERT` manual
+
+O primeiro desenho pedia uma linha em `meta_pages` por cliente, com o page access token
+colado à mão. Não escala — e token colado à mão é token que vaza. Substituído por um fluxo
+de OAuth, igual em espírito ao QR do WhatsApp:
+
+**Configurações → Formulários do Meta → "Conectar Facebook"** →
+`GET /api/meta/oauth/start` (admin+, emite um `state` assinado com o accountId) →
+diálogo do Meta → `GET /api/meta/oauth/callback` → troca o `code` por um user token longo,
+lista as páginas do usuário, **assina o campo `leadgen` de cada uma**
+(`POST /{page_id}/subscribed_apps`) e grava `meta_pages` com o token cifrado.
+
+O admin nunca vê nem copia segredo nenhum. Escopos: `pages_show_list`,
+`pages_read_engagement`, `pages_manage_metadata`, `leads_retrieval`.
+
+Detalhes que valem registro:
+- **O `state` é HMAC-assinado** e vale 15 min. Sem isso, alguém chamaria o callback com o
+  `accountId` de outra conta e plantaria a própria página lá dentro. Coberto por teste
+  (`src/lib/meta/oauth.test.ts`), incluindo o ataque de reusar o MAC trocando o payload.
+- **`page_id` é chave primária global.** O callback recusa conectar uma página que já
+  pertence a outra conta — senão um upsert a sequestraria, e os leads dela cairiam na conta
+  errada. Reconectar a mesma conta continua permitido (renova o token).
+- **Assina antes de gravar.** Se o Meta recusar a assinatura, a página não entra no banco;
+  do contrário ficaria uma linha que nunca receberia webhook.
+- **Não há `INSERT` pela UI** (policy só de `SELECT` e `DELETE`, migration `050`). Um `INSERT`
+  livre deixaria um admin apontar `page_id` alheio para a própria conta.
+
+### Falta para amanhã (tudo configuração, nada de código)
+- [ ] Na Vercel: `META_APP_ID`, `META_APP_SECRET` (**está vazio hoje**) e `META_VERIFY_TOKEN`. São do **app**, valem para todos os clientes.
+- [ ] No app do Meta: cadastrar o redirect `https://super-crm.pro/api/meta/oauth/callback` e o webhook `https://super-crm.pro/api/webhooks/meta/leadgen` (campo `leadgen`).
+- [ ] O cliente (ou você, como admin da conta) clica em **Conectar Facebook**. Isso substitui entregar webhook e token para a Mayara.
 - [ ] Teste com lead real antes de ativar.
 
 **Não testado de verdade:** a chamada à Graph API só foi exercitada com token falso (falha esperada, `OAuthException` code 190). O caminho feliz — `field_data` → contato → card — **nunca rodou com um lead real**. Os nomes de campo (`full_name`, `phone_number`) são o padrão do Meta, mas se o formulário da Vila Real usar rótulos customizados, o `pick()` não acha o telefone e o lead é descartado com log. **Conferir os nomes dos campos do formulário antes de ativar.**
