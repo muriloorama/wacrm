@@ -36,6 +36,28 @@ export const LEAD_PIPELINE_NAME = 'Funil de Vendas';
 export const LEAD_TAG_NAME = 'Novo Lead';
 export const LEAD_ORIGEM = 'formulario';
 
+// Coluna de entrada dos leads de formulário DENTRO do funil único. Não é o
+// kanban separado de antes: é só a primeira coluna, para o lead não se
+// misturar com quem chegou pelo WhatsApp antes de alguém olhar.
+// Se a conta não tiver essa coluna, o lead cai na primeira etapa do funil.
+export const LEAD_STAGE_NAME = 'Formulário';
+
+/** Etapa `Formulário` do funil, ou a primeira etapa se ela não existir. */
+async function resolveLeadStage(
+  db: SupabaseClient,
+  pipelineId: string,
+): Promise<string> {
+  const { data } = await db
+    .from('pipeline_stages')
+    .select('id')
+    .eq('pipeline_id', pipelineId)
+    .eq('name', LEAD_STAGE_NAME)
+    .maybeSingle();
+
+  if (data?.id) return data.id as string;
+  return getFirstStageId(db, pipelineId);
+}
+
 export interface LeadInput {
   /** Aceita telefone local BR; normalizado para E.164 aqui. */
   phone: string;
@@ -83,7 +105,7 @@ export async function ingestLead(
     auditUserId,
     LEAD_PIPELINE_NAME,
   );
-  const stageId = await getFirstStageId(db, pipelineId);
+  const stageId = await resolveLeadStage(db, pipelineId);
 
   const deal = await createDeal(db, accountId, auditUserId, {
     title: input.name ? `Lead: ${input.name}` : `Lead: ${phone}`,

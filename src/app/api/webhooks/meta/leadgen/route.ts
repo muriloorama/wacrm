@@ -186,10 +186,21 @@ async function processLeadgen(body: unknown) {
         continue;
       }
 
-      const fields = await fetchLeadFields(
-        leadgenId,
-        decrypt(page.page_access_token as string),
-      );
+      let fields: Record<string, string>;
+      try {
+        fields = await fetchLeadFields(
+          leadgenId,
+          decrypt(page.page_access_token as string),
+        );
+      } catch (err) {
+        // Definitivo: não adianta o Meta reentregar. Segue para o próximo
+        // evento e o handler devolve 200.
+        if (err instanceof PermanentLeadError) {
+          console.error('[meta-leadgen]', err.message);
+          continue;
+        }
+        throw err;
+      }
 
       const phone = pick(fields, PHONE_FIELDS);
       if (!phone) {
@@ -225,6 +236,9 @@ async function processLeadgen(body: unknown) {
 // ------------------------------------------------------------
 // O payload do webhook não traz os campos. Só o id.
 // ------------------------------------------------------------
+/** Erro que reentregar não resolve: id inválido, token morto, sem permissão. */
+class PermanentLeadError extends Error {}
+
 async function fetchLeadFields(
   leadgenId: string,
   pageAccessToken: string,
@@ -232,9 +246,18 @@ async function fetchLeadFields(
   const url = `https://graph.facebook.com/${GRAPH_VERSION}/${leadgenId}?access_token=${encodeURIComponent(pageAccessToken)}`;
   const res = await fetch(url);
   if (!res.ok) {
-    throw new Error(
-      `Graph API ${res.status} ao buscar ${leadgenId}: ${(await res.text()).slice(0, 200)}`,
-    );
+    const detalhe = (await res.text()).slice(0, 200);
+
+    // 4xx (menos 429) é definitivo: `leadgen_id` que não existe — o caso do
+    // botão "Testar" do painel de Webhooks, que manda um id falso —, token de
+    // página revogado, permissão ausente. Devolver 500 aqui faria o Meta
+    // reentregar em loop, para sempre, sem chance de dar certo.
+    if (res.status >= 400 && res.status < 500 && res.status !== 429) {
+      throw new PermanentLeadError(
+        `Graph API ${res.status} ao buscar ${leadgenId}: ${detalhe}`,
+      );
+    }
+    throw new Error(`Graph API ${res.status} ao buscar ${leadgenId}: ${detalhe}`);
   }
 
   const data = (await res.json()) as {
