@@ -8,7 +8,14 @@ import { isB2Configured, presignPutUrl, publicUrl } from "@/lib/storage/b2";
 export const runtime = "nodejs";
 
 /** Prefixos lógicos permitidos dentro do bucket B2. */
-const ALLOWED_BUCKETS = new Set(["chat-media", "flow-media", "avatars"]);
+const ALLOWED_BUCKETS = new Set([
+  "chat-media",
+  "flow-media",
+  "avatars",
+  // Logos white-label da conta (appearance-panel → uploadAccountMedia("logos")).
+  // Faltava aqui, então todo upload de logo falhava com "Parâmetros inválidos".
+  "logos",
+]);
 
 /**
  * Emite uma URL pré-assinada para o cliente subir um arquivo direto no

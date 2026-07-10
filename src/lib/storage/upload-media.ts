@@ -41,6 +41,25 @@ export const MEDIA_MAX_BYTES_BY_KIND = {
  * - The timestamp + the original name keep collisions between two
  *   concurrent uploads astronomically unlikely.
  */
+/** Extensão de arquivo a partir de um MIME (para nomear arquivos sem nome). */
+function extFromMime(mime: string): string {
+  const map: Record<string, string> = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "image/gif": "gif",
+    "image/svg+xml": "svg",
+    "audio/ogg": "ogg",
+    "audio/mpeg": "mp3",
+    "audio/mp4": "m4a",
+    "audio/aac": "aac",
+    "audio/amr": "amr",
+    "video/mp4": "mp4",
+    "application/pdf": "pdf",
+  };
+  return map[mime] ?? "bin";
+}
+
 export function buildMediaPath(
   accountId: string,
   fileName: string,
@@ -82,6 +101,13 @@ export async function uploadAccountMedia(
   file: File,
 ): Promise<UploadAccountMediaResult> {
   const contentType = file.type || "application/octet-stream";
+  // Alguns arquivos chegam SEM nome (foto de câmera / colagem no mobile,
+  // áudio gravado). O servidor rejeitava fileName vazio com "Parâmetros
+  // inválidos" — derivamos um nome com extensão a partir do MIME.
+  const fileName =
+    file.name && file.name.trim()
+      ? file.name
+      : `arquivo.${extFromMime(contentType)}`;
 
   // 1) Pede a URL pré-assinada ao servidor (auth + conta resolvidos lá).
   const presignRes = await fetch("/api/media/presign", {
@@ -89,7 +115,7 @@ export async function uploadAccountMedia(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       bucket,
-      fileName: file.name,
+      fileName,
       contentType,
       size: file.size,
     }),

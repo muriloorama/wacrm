@@ -18,18 +18,32 @@ export function normalizePhone(phone: string): string {
 }
 
 /**
- * Compare two phone numbers accounting for trunk prefix differences.
- * e.g. "370063949836" (with trunk 0) matches "37063949836" (without trunk 0)
- * by comparing the last 8 digits.
+ * Compare two phone numbers tolerando diferença de código de país e de
+ * trunk-prefix — SEM o antigo "últimos 8 dígitos", que fundia números
+ * de DDDs diferentes no Brasil (ex.: (65) 99566-2000 e (11) 99566-2000
+ * têm os mesmos 8 dígitos finais mas são pessoas diferentes).
+ *
+ * Casam quando:
+ *   - as formas normalizadas são iguais; OU
+ *   - uma é a outra só com o código de país à frente (o mais curto, de
+ *     pelo menos 10 dígitos, é sufixo do mais longo e a diferença é o
+ *     CC, ≤ 3 dígitos); OU
+ *   - diferem apenas por um trunk-0 inserido/removido após o CC
+ *     (via phoneVariants) — o caso internacional original.
  */
 export function phonesMatch(phone1: string, phone2: string): boolean {
   const n1 = normalizePhone(phone1)
   const n2 = normalizePhone(phone2)
+  if (!n1 || !n2) return false
   if (n1 === n2) return true
-  if (n1.length >= 8 && n2.length >= 8) {
-    return n1.slice(-8) === n2.slice(-8)
+
+  const [short, long] = n1.length <= n2.length ? [n1, n2] : [n2, n1]
+  if (short.length >= 10 && long.endsWith(short) && long.length - short.length <= 3) {
+    return true
   }
-  return false
+
+  const v2 = new Set(phoneVariants(n2))
+  return phoneVariants(n1).some((v) => v2.has(v))
 }
 
 /**

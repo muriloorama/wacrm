@@ -42,11 +42,15 @@ export async function findExistingContact(
 
   const suffix = normalized.length >= 8 ? normalized.slice(-8) : normalized;
 
+  // Pré-filtro pela coluna NORMALIZADA (só dígitos). O antigo LIKE sobre
+  // `phone` (cru, com máscara/hífen de imports) não casava o sufixo de
+  // dígitos → o contato existente não era encontrado, o insert batia no
+  // índice único (23505) e a ingestão de lead falhava com 500.
   const { data, error } = await db
     .from("contacts")
     .select("*")
     .eq("account_id", accountId)
-    .like("phone", `%${suffix}`);
+    .like("phone_normalized", `%${suffix}`);
 
   if (error || !data) return null;
 

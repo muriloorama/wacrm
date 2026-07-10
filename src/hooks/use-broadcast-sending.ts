@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { fetchAllRange, fetchByIdsChunked } from '@/lib/supabase/paginate';
+import { normalizePhone } from '@/lib/whatsapp/phone-utils';
 import { useAuth } from '@/hooks/use-auth';
 import { Contact, MessageTemplate } from '@/types';
 
@@ -238,38 +239,50 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       throw new Error('Your profile is not linked to an account.');
     }
 
-    // De-duplicate by phone within the CSV (users can paste duplicates).
-    const uniqueByPhone = new Map<string, { phone: string; name?: string }>();
+    // De-dup por telefone NORMALIZADO (dois formatos do mesmo número são a
+    // mesma pessoa). Mapeia normalizado → linha do CSV, mantendo a 1ª.
+    const byNorm = new Map<string, { phone: string; name?: string }>();
     for (const row of csvRows) {
-      if (row.phone) uniqueByPhone.set(row.phone, row);
+      const norm = normalizePhone(row.phone);
+      if (norm && !byNorm.has(norm)) byNorm.set(norm, row);
     }
-    const phones = [...uniqueByPhone.keys()];
+    const norms = [...byNorm.keys()];
 
-    // Single round-trip lookup of existing contacts by phone.
-    const { data: existing, error: lookupErr } = await supabase
-      .from('contacts')
-      .select('*')
-      .eq('user_id', user.id)
-      .in('phone', phones);
-    if (lookupErr) {
-      throw new Error(`Failed to look up CSV contacts: ${lookupErr.message}`);
+    // Busca existentes NA CONTA por telefone normalizado — não por user_id
+    // (contatos de colegas/webhook têm outro user_id) nem por string exata
+    // (não casa formatos diferentes). Em lotes (contorna o teto de 1000 e o
+    // limite de tamanho do .in()).
+    const existing = await fetchByIdsChunked<Contact>(norms, (chunk) =>
+      supabase
+        .from('contacts')
+        .select('*')
+        .eq('account_id', accountId)
+        .in('phone_normalized', chunk),
+    );
+    const norm = (c: Contact) => normalizePhone((c as { phone?: string }).phone ?? '');
+    const byNormContact = new Map<string, Contact>();
+    for (const c of existing) {
+      const k = norm(c);
+      if (k) byNormContact.set(k, c);
     }
 
-    const byPhone = new Map<string, Contact>();
-    for (const c of (existing ?? []) as Contact[]) {
-      if (c.phone) byPhone.set(c.phone, c);
-    }
-
-    // Insert only missing contacts, in one batch per 200 rows (PostgREST
-    // has a default payload cap — 200 keeps individual requests small).
-    const missing = phones
-      .filter((p) => !byPhone.has(p))
-      .map((phone) => ({
+    // Insere só os que faltam. O índice único (account_id, phone_normalized)
+    // é o backstop: numa duplicata/corrida (23505) NÃO abortamos a campanha —
+    // reinserimos o lote linha a linha e re-buscamos os que já existiam.
+    const missing = norms
+      .filter((n) => !byNormContact.has(n))
+      .map((n) => ({
         user_id: user.id,
         account_id: accountId,
-        phone,
-        name: uniqueByPhone.get(phone)?.name ?? null,
+        phone: byNorm.get(n)!.phone,
+        name: byNorm.get(n)?.name ?? null,
       }));
+
+    const record = (c: Contact | null | undefined) => {
+      if (!c) return;
+      const k = norm(c);
+      if (k) byNormContact.set(k, c);
+    };
 
     const INSERT_CHUNK = 200;
     for (let i = 0; i < missing.length; i += INSERT_CHUNK) {
@@ -278,17 +291,36 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
         .from('contacts')
         .insert(chunk)
         .select();
-      if (insertErr) {
-        throw new Error(`Failed to create CSV contacts: ${insertErr.message}`);
+      if (!insertErr) {
+        for (const c of (inserted ?? []) as Contact[]) record(c);
+        continue;
       }
-      for (const c of (inserted ?? []) as Contact[]) {
-        if (c.phone) byPhone.set(c.phone, c);
+      // Fallback: uma duplicata faz o insert do lote inteiro falhar. Reinsere
+      // linha a linha para que os números NOVOS ainda entrem; os que já
+      // existiam são re-buscados.
+      for (const row of chunk) {
+        const { data: one, error: oneErr } = await supabase
+          .from('contacts')
+          .insert(row)
+          .select()
+          .maybeSingle();
+        if (!oneErr) {
+          record(one as Contact | null);
+          continue;
+        }
+        const { data: found } = await supabase
+          .from('contacts')
+          .select('*')
+          .eq('account_id', accountId)
+          .eq('phone_normalized', normalizePhone(row.phone))
+          .maybeSingle();
+        record(found as Contact | null);
       }
     }
 
-    // Preserve input order so analytics roughly matches the CSV order.
-    return phones
-      .map((p) => byPhone.get(p))
+    // Preserva a ordem de entrada.
+    return norms
+      .map((n) => byNormContact.get(n))
       .filter((c): c is Contact => Boolean(c));
   }
 
