@@ -358,6 +358,9 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
     setProgress(0);
 
     const supabase = createClient();
+    // Rastreado fora do try para o catch conseguir tirar a transmissão de
+    // "sending" caso algo estoure no meio (senão ela fica presa para sempre).
+    let createdBroadcastId: string | null = null;
 
     try {
       // ── Step 0: Resolve current user ──────────────────────────────
@@ -417,6 +420,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
           `Failed to create broadcast: ${broadcastError?.message ?? 'unknown error'}`,
         );
       }
+      createdBroadcastId = broadcast.id as string;
 
       // ── Step 3: Insert recipient rows ─────────────────────────────
       setProgress(20);
@@ -600,6 +604,18 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
 
       setProgress(100);
       return broadcast.id;
+    } catch (err) {
+      // Erro no meio do envio: não deixa a transmissão presa em "sending".
+      // (O fechamento da aba no meio ainda é um caso à parte — exigiria um
+      // reaper no servidor; aqui cobrimos os erros recuperáveis.)
+      if (createdBroadcastId) {
+        await supabase
+          .from('broadcasts')
+          .update({ status: 'failed' })
+          .eq('id', createdBroadcastId)
+          .eq('status', 'sending');
+      }
+      throw err;
     } finally {
       setIsProcessing(false);
     }

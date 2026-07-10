@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { fetchAllRange } from '@/lib/supabase/paginate';
 import { CustomField, Tag } from '@/types';
 import { Button } from '@/components/ui/button';
 import {
@@ -140,26 +141,31 @@ export function Step2SelectAudience({
         audience.tagIds &&
         audience.tagIds.length > 0
       ) {
-        const { data } = await supabase
-          .from('contact_tags')
-          .select('contact_id')
-          .in('tag_id', audience.tagIds);
-        baseIds = new Set((data ?? []).map((r) => r.contact_id));
+        const rows = await fetchAllRange<{ contact_id: string }>((from, to) =>
+          supabase
+            .from('contact_tags')
+            .select('contact_id')
+            .in('tag_id', audience.tagIds!)
+            .range(from, to),
+        ).catch(() => [] as { contact_id: string }[]);
+        baseIds = new Set(rows.map((r) => r.contact_id));
       } else if (
         audience.type === 'custom_field' &&
         audience.customField?.fieldId &&
         audience.customField.value
       ) {
         const { fieldId, operator, value } = audience.customField;
-        let q = supabase
-          .from('contact_custom_values')
-          .select('contact_id')
-          .eq('custom_field_id', fieldId);
-        if (operator === 'is') q = q.eq('value', value);
-        else if (operator === 'is_not') q = q.neq('value', value);
-        else q = q.ilike('value', `%${value}%`);
-        const { data } = await q;
-        baseIds = new Set((data ?? []).map((r) => r.contact_id));
+        const rows = await fetchAllRange<{ contact_id: string }>((from, to) => {
+          let q = supabase
+            .from('contact_custom_values')
+            .select('contact_id')
+            .eq('custom_field_id', fieldId);
+          if (operator === 'is') q = q.eq('value', value);
+          else if (operator === 'is_not') q = q.neq('value', value);
+          else q = q.ilike('value', `%${value}%`);
+          return q.range(from, to);
+        }).catch(() => [] as { contact_id: string }[]);
+        baseIds = new Set(rows.map((r) => r.contact_id));
       } else if (
         audience.type === 'csv' &&
         audience.csvContacts &&
