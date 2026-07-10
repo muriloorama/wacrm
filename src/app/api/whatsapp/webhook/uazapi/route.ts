@@ -7,6 +7,7 @@ import { findExistingContact, isUniqueViolation } from "@/lib/contacts/dedupe";
 import { decrypt } from "@/lib/whatsapp/encryption";
 import { downloadMedia, getInstanceStatus } from "@/lib/whatsapp/uazapi-api";
 import { isB2Configured, uploadBuffer, publicUrl } from "@/lib/storage/b2";
+import { transcribeAudio, getAccountOpenAiKey } from "@/lib/whatsapp/transcribe";
 import { runAutomationsForTrigger } from "@/lib/automations/engine";
 import { dispatchInboundToFlows } from "@/lib/flows/engine";
 
@@ -1091,6 +1092,20 @@ async function resolveAndStoreMedia(
           const key = `chat-media/account-${accountId}/${Date.now()}-${mid}.${ext}`;
           await uploadBuffer(key, bytes, mime);
           mediaUrl = publicUrl(key);
+
+          // Transcrição de áudio (best-effort): usa a chave OpenAI DA CONTA.
+          if (mime.startsWith("audio/")) {
+            const apiKey = await getAccountOpenAiKey(db, accountId);
+            if (apiKey) {
+              const text = await transcribeAudio(bytes, mime, apiKey);
+              if (text) {
+                await db
+                  .from("messages")
+                  .update({ transcription: text })
+                  .eq("id", messageId);
+              }
+            }
+          }
         }
       } catch (err) {
         console.error("[webhook] falha ao subir mídia ao B2:", err);

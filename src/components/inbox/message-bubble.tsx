@@ -202,12 +202,17 @@ function MessageContent({ message }: { message: Message }) {
 
     case "audio":
       return (
-        <div>
+        <div className="space-y-1.5">
           {message.media_url ? (
             <audio src={message.media_url} controls className="max-w-60" />
           ) : (
             <MediaUnavailable label="Áudio" />
           )}
+          {message.transcription ? (
+            <p className="max-w-60 whitespace-pre-wrap text-sm italic opacity-90">
+              {message.transcription}
+            </p>
+          ) : null}
         </div>
       );
 

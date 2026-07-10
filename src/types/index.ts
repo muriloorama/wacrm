@@ -225,6 +225,8 @@ export interface Message {
   content_type: ContentType;
   content_text?: string;
   media_url?: string;
+  /** Transcrição de áudio (Whisper), quando a conta tem chave OpenAI. */
+  transcription?: string;
   template_name?: string;
   message_id?: string;
   status: MessageStatus;

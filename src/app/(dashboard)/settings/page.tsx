@@ -18,6 +18,7 @@ import { DealsSettings } from '@/components/settings/deals-settings';
 import { MembersTab } from '@/components/settings/members-tab';
 import { MetaConnect } from '@/components/settings/meta-connect';
 import { ApiKeysSettings } from '@/components/settings/api-keys-settings';
+import { OpenAiPanel } from '@/components/settings/openai-panel';
 import { SettingsPanelBoundary } from '@/components/settings/panel-boundary';
 import {
   resolveSection,
@@ -128,6 +129,7 @@ export default function SettingsPage() {
     fields: <FieldsAndTagsPanel />,
     deals: <DealsSettings />,
     followup: <FollowupPanel />,
+    transcription: <OpenAiPanel />,
     members: <MembersTab />,
     api: <ApiKeysSettings />,
   };

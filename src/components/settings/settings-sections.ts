@@ -4,6 +4,7 @@ import {
   FileText,
   KeyRound,
   LayoutGrid,
+  Mic,
   Palette,
   PlugZap,
   Send,
@@ -33,6 +34,7 @@ export const SETTINGS_SECTIONS = [
   'fields',
   'deals',
   'followup',
+  'transcription',
   'members',
   'api',
 ] as const;
@@ -60,6 +62,7 @@ export const SECTION_META: Record<SettingsSection, SectionMeta> = {
   fields: { id: 'fields', label: 'Campos e etiquetas', icon: Tags, group: 'workspace' },
   deals: { id: 'deals', label: 'Negócios e moeda', icon: Coins, group: 'workspace' },
   followup: { id: 'followup', label: 'Follow-up automático', icon: Send, group: 'workspace' },
+  transcription: { id: 'transcription', label: 'Transcrição de áudio', icon: Mic, group: 'workspace' },
   members: { id: 'members', label: 'Membros da equipe', icon: UsersRound, group: 'workspace' },
   api: { id: 'api', label: 'Chaves de API', icon: KeyRound, group: 'workspace' },
 };
