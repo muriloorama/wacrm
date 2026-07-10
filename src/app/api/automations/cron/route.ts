@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
-import { resumePendingExecution } from '@/lib/automations/engine'
+import {
+  resumePendingExecution,
+  runAutomationsForTrigger,
+} from '@/lib/automations/engine'
 import type { AutomationContext } from '@/lib/automations/engine'
+import type { AutomationTriggerType } from '@/types'
 
 /**
  * Drain due `automation_pending_executions` rows. Meant to be hit
@@ -38,6 +42,9 @@ export async function GET(request: Request) {
   }
 
   const admin = supabaseAdmin()
+
+  // ── 1) Retoma waits agendados (automation_pending_executions) ──────
+  let processed = 0
   const { data: due, error } = await admin
     .from('automation_pending_executions')
     .select('*')
@@ -47,10 +54,8 @@ export async function GET(request: Request) {
     .limit(50)
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  if (!due || due.length === 0) return NextResponse.json({ processed: 0 })
 
-  let processed = 0
-  for (const row of due) {
+  for (const row of due ?? []) {
     const { data: claim } = await admin
       .from('automation_pending_executions')
       .update({ status: 'running' })
@@ -77,5 +82,40 @@ export async function GET(request: Request) {
     processed++
   }
 
-  return NextResponse.json({ processed })
+  // ── 2) Drena a fila de gatilhos (tag_added / conversation_assigned) ─
+  // Enfileirada pelos triggers do banco (migration 054), já que essas
+  // ações acontecem no cliente e não têm ponto de disparo no servidor.
+  let triggers = 0
+  const { data: events } = await admin
+    .from('automation_trigger_queue')
+    .select('*')
+    .eq('status', 'pending')
+    .order('created_at', { ascending: true })
+    .limit(200)
+
+  for (const ev of events ?? []) {
+    // Marca 'done' ANTES de rodar (claim). runAutomationsForTrigger nunca
+    // lança, e não queremos reprocessar em loop se algo falhar.
+    const { data: claim } = await admin
+      .from('automation_trigger_queue')
+      .update({ status: 'done' })
+      .eq('id', ev.id)
+      .eq('status', 'pending')
+      .select('id')
+      .maybeSingle()
+    if (!claim) continue
+
+    await runAutomationsForTrigger({
+      accountId: ev.account_id as string,
+      triggerType: ev.trigger_type as AutomationTriggerType,
+      contactId: (ev.contact_id as string | null) ?? null,
+      context: {
+        tag_id: (ev.tag_id as string | null) ?? undefined,
+        agent_id: (ev.agent_id as string | null) ?? undefined,
+      },
+    })
+    triggers++
+  }
+
+  return NextResponse.json({ processed, triggers })
 }
