@@ -159,8 +159,17 @@ export default function ContactsPage() {
         .range(from, to);
 
       if (term) {
-        const like = `%${term}%`;
-        query = query.or(`name.ilike.${like},phone.ilike.${like},email.ilike.${like}`);
+        // Remove caracteres que quebram a sintaxe do filtro .or do PostgREST
+        // (vírgula = separador entre condições, parênteses = agrupamento).
+        // Sem isto, buscar "Silva, João" ou algo com "(" derrubava a query
+        // com "Falha ao carregar contatos".
+        const safe = term.replace(/[,()\\"]/g, " ").trim();
+        if (safe) {
+          const like = `%${safe}%`;
+          query = query.or(
+            `name.ilike.${like},phone.ilike.${like},email.ilike.${like}`,
+          );
+        }
       }
 
       const { data, count: exactCount, error } = await query;

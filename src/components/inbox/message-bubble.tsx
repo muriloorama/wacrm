@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import type { Message, MessageReaction } from "@/types";
 import {
@@ -71,37 +71,42 @@ function MediaImage({ url, alt }: { url: string; alt: string }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [zoomed]);
 
-  const loadImage = useCallback(async () => {
+  useEffect(() => {
     if (!url) return;
 
-    // Proxy URLs need auth fetch to create blob URL
-    if (url.startsWith("/api/whatsapp/media/")) {
+    // URLs públicas usam a própria URL, sem blob.
+    if (!url.startsWith("/api/whatsapp/media/")) {
+      setSrc(url);
+      setLoading(false);
+      return;
+    }
+
+    // Proxy: precisa de fetch autenticado → blob URL. O revoke tem que
+    // liberar ESTE blob (variável local), não o `src` do estado — a
+    // versão anterior lia o `src` da closure de render (null na 1ª vez),
+    // então nunca revogava e vazava um blob por imagem.
+    let active = true;
+    let blobUrl: string | null = null;
+    (async () => {
       try {
         const res = await fetch(url);
         if (!res.ok) throw new Error("Failed to load media");
         const blob = await res.blob();
-        const blobUrl = URL.createObjectURL(blob);
-        setSrc(blobUrl);
+        blobUrl = URL.createObjectURL(blob);
+        if (active) setSrc(blobUrl);
+        else URL.revokeObjectURL(blobUrl);
       } catch {
-        setError(true);
+        if (active) setError(true);
       } finally {
-        setLoading(false);
+        if (active) setLoading(false);
       }
-    } else {
-      setSrc(url);
-      setLoading(false);
-    }
-  }, [url]);
+    })();
 
-  useEffect(() => {
-    loadImage();
     return () => {
-      if (src?.startsWith("blob:")) {
-        URL.revokeObjectURL(src);
-      }
+      active = false;
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadImage]);
+  }, [url]);
 
   if (error) {
     return (

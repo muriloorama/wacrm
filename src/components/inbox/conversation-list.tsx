@@ -94,6 +94,13 @@ const MEDIA_PREVIEWS: Record<
   "[áudio]": { icon: Mic, label: "Áudio" },
   "[vídeo]": { icon: Video, label: "Vídeo" },
   "[documento]": { icon: FileText, label: "Documento" },
+  // Marcadores crus em inglês gravados pelo webhook da Meta (`[image]` etc).
+  // Sem isto, mídia recebida pela API Oficial mostrava o texto literal.
+  "[image]": { icon: ImageIcon, label: "Foto" },
+  "[audio]": { icon: Mic, label: "Áudio" },
+  "[video]": { icon: Video, label: "Vídeo" },
+  "[document]": { icon: FileText, label: "Documento" },
+  "[sticker]": { icon: ImageIcon, label: "Figurinha" },
 };
 
 type InboxFilter = ConversationStatus | "all" | "unread" | "archived";

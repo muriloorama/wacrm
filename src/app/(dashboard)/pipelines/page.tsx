@@ -169,7 +169,13 @@ export default function PipelinesPage() {
       color: s.color,
       position: s.position,
     }));
-    await supabase.from("pipeline_stages").insert(stagesPayload);
+    const { error: stagesErr } = await supabase
+      .from("pipeline_stages")
+      .insert(stagesPayload);
+    if (stagesErr) {
+      // Funil sem etapas fica inutilizável (não dá pra adicionar negócio).
+      console.error("Failed to seed pipeline stages:", stagesErr.message);
+    }
 
     return pipeline as Pipeline;
   }, [supabase, accountId]);
@@ -319,7 +325,15 @@ export default function PipelinesPage() {
       color: s.color,
       position: s.position,
     }));
-    await supabase.from("pipeline_stages").insert(stagesPayload);
+    const { error: stagesErr } = await supabase
+      .from("pipeline_stages")
+      .insert(stagesPayload);
+    if (stagesErr) {
+      console.error("Failed to create pipeline stages:", stagesErr.message);
+      toast.error(
+        "Funil criado, mas as etapas falharam. Recarregue e tente de novo.",
+      );
+    }
 
     setNewPipelineName("");
     setNewPipelineOpen(false);
