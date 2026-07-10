@@ -1,8 +1,17 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   resolve: {
     tsconfigPaths: true,
+    alias: {
+      // `server-only` lança erro fora de um RSC; nos testes Node aliasamos
+      // para um stub vazio para que os módulos server-side importáveis
+      // (provider, storage) carreguem.
+      "server-only": fileURLToPath(
+        new URL("./src/test/stubs/server-only.ts", import.meta.url),
+      ),
+    },
   },
   test: {
     environment: "node",

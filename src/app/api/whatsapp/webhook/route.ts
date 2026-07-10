@@ -1020,15 +1020,26 @@ async function findOrCreateConversation(
   configOwnerUserId: string,
   contactId: string,
 ) {
-  // Look for existing conversation in this account
+  // Um contato pode ter VÁRIAS conversas (uma por canal). O `.single()`
+  // dava erro tanto para 0 quanto para 2+ linhas — e, com 2+, o erro caía
+  // no insert e criava uma conversa NOVA a cada mensagem recebida. Aqui
+  // reusamos a conversa mais recente do contato e tratamos o erro real
+  // separadamente do caso "não existe" (mesma correção já feita no send).
   const { data: existing, error: findError } = await supabaseAdmin()
     .from('conversations')
     .select('*')
     .eq('account_id', accountId)
     .eq('contact_id', contactId)
-    .single()
+    .order('last_message_at', { ascending: false, nullsFirst: false })
+    .limit(1)
+    .maybeSingle()
 
-  if (!findError && existing) {
+  if (findError) {
+    console.error('Error looking up conversation:', findError)
+    return null
+  }
+
+  if (existing) {
     return { conversation: existing, created: false }
   }
 

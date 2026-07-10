@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { fetchAllRange } from '@/lib/supabase/paginate'
 import {
   daysAgoStart,
   DOW_SHORT_MON_FIRST,
@@ -39,7 +40,6 @@ export async function loadMetrics(db: DB): Promise<MetricsBundle> {
     newConvYesterday,
     newContactsToday,
     newContactsYesterday,
-    openDeals,
     messagesToday,
     messagesYesterday,
   ] = await Promise.all([
@@ -61,7 +61,6 @@ export async function loadMetrics(db: DB): Promise<MetricsBundle> {
       .select('id', { count: 'exact', head: true })
       .gte('created_at', yesterdayStart)
       .lt('created_at', todayStart),
-    db.from('deals').select('value, status').eq('status', 'open'),
     db
       .from('messages')
       .select('id', { count: 'exact', head: true })
@@ -75,7 +74,11 @@ export async function loadMetrics(db: DB): Promise<MetricsBundle> {
       .lt('created_at', todayStart),
   ])
 
-  const openDealsRows = (openDeals.data ?? []) as { value: number | null }[]
+  // Paginado: acima de 1000 negócios abertos, um select simples truncava e
+  // o valor/contagem do card saíam errados.
+  const openDealsRows = await fetchAllRange<{ value: number | null }>((from, to) =>
+    db.from('deals').select('value, status').eq('status', 'open').range(from, to),
+  )
   const openDealsValue = openDealsRows.reduce((sum, d) => sum + (d.value ?? 0), 0)
 
   return {
@@ -106,12 +109,17 @@ export async function loadConversationsSeries(
   rangeDays: number,
 ): Promise<ConversationsSeriesPoint[]> {
   const start = daysAgoStart(rangeDays - 1).toISOString()
-  const { data, error } = await db
-    .from('messages')
-    .select('created_at, sender_type')
-    .gte('created_at', start)
-    .order('created_at', { ascending: true })
-  if (error) throw error
+  // Paginado: com >1000 mensagens no período, o cap truncava e — como a
+  // ordenação é ascendente — os DIAS MAIS RECENTES do gráfico zeravam.
+  const data = await fetchAllRange<{ created_at: string; sender_type: string }>(
+    (from, to) =>
+      db
+        .from('messages')
+        .select('created_at, sender_type')
+        .gte('created_at', start)
+        .order('created_at', { ascending: true })
+        .range(from, to),
+  )
 
   const keys = lastNDayKeys(rangeDays)
   const buckets = new Map<string, { incoming: number; outgoing: number }>()
@@ -131,14 +139,16 @@ export async function loadConversationsSeries(
 // --- 3. Pipeline donut -------------------------------------------------
 
 export async function loadPipelineDonut(db: DB): Promise<PipelineDonutData> {
-  const [stagesRes, dealsRes] = await Promise.all([
+  const [stagesRes, deals] = await Promise.all([
     db.from('pipeline_stages').select('id, name, color, pipeline_id, position').order('position'),
-    db.from('deals').select('stage_id, value, status').eq('status', 'open'),
+    // Paginado: acima de 1000 negócios abertos o donut somava errado.
+    fetchAllRange<{ stage_id: string; value: number | null }>((from, to) =>
+      db.from('deals').select('stage_id, value, status').eq('status', 'open').range(from, to),
+    ),
   ])
 
   const stages =
     (stagesRes.data ?? []) as { id: string; name: string; color: string }[]
-  const deals = (dealsRes.data ?? []) as { stage_id: string; value: number | null }[]
 
   const byStage = new Map<string, { count: number; total: number }>()
   for (const d of deals) {
@@ -176,19 +186,21 @@ export async function loadResponseTime(db: DB): Promise<ResponseTimeSummary> {
   // with enough overlap if the user opens the dashboard late on a
   // Monday.
   const fourteenDaysAgo = daysAgoStart(13).toISOString()
-  const { data, error } = await db
-    .from('messages')
-    .select('conversation_id, sender_type, created_at')
-    .gte('created_at', fourteenDaysAgo)
-    .order('conversation_id', { ascending: true })
-    .order('created_at', { ascending: true })
-  if (error) throw error
-
-  const rows = (data ?? []) as {
+  // Paginado: com >1000 mensagens em 14 dias, o cap descartava parte dos
+  // pares "primeira entrada → primeira resposta" e distorcia o tempo médio.
+  const rows = await fetchAllRange<{
     conversation_id: string
     sender_type: string
     created_at: string
-  }[]
+  }>((from, to) =>
+    db
+      .from('messages')
+      .select('conversation_id, sender_type, created_at')
+      .gte('created_at', fourteenDaysAgo)
+      .order('conversation_id', { ascending: true })
+      .order('created_at', { ascending: true })
+      .range(from, to),
+  )
 
   // Group per conversation, pair unreplied customer messages with the
   // next outbound message from the agent/bot. A single customer message

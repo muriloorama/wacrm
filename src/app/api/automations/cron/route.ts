@@ -14,13 +14,26 @@ import type { AutomationContext } from '@/lib/automations/engine'
  * only; expensive SELECT ... FOR UPDATE is avoided in favor of a
  * two-step UPDATE-by-id.
  */
+// Aceita tanto o Vercel Cron (`Authorization: Bearer <CRON_SECRET>`)
+// quanto um pinger externo (`x-cron-secret: <AUTOMATION_CRON_SECRET>`).
+function cronAuthorized(request: Request): boolean {
+  const secrets = [
+    process.env.CRON_SECRET,
+    process.env.AUTOMATION_CRON_SECRET,
+  ].filter(Boolean) as string[]
+  if (secrets.length === 0) return false
+  const bearer = request.headers.get('authorization')
+  const header = request.headers.get('x-cron-secret')
+  return secrets.some(
+    (s) => bearer === `Bearer ${s}` || header === s,
+  )
+}
+
 export async function GET(request: Request) {
-  const expected = process.env.AUTOMATION_CRON_SECRET
-  if (!expected) {
+  if (!process.env.CRON_SECRET && !process.env.AUTOMATION_CRON_SECRET) {
     return NextResponse.json({ error: 'cron not configured' }, { status: 503 })
   }
-  const supplied = request.headers.get('x-cron-secret')
-  if (supplied !== expected) {
+  if (!cronAuthorized(request)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

@@ -26,22 +26,35 @@ import { resolveFallbackPolicy } from '@/lib/flows/fallback'
  * default; once per hour would also be acceptable for low-volume
  * tenants.
  */
+// Constant-time compare de duas strings (evita vazar o segredo por
+// resposta-tempo). O pré-check de tamanho é exigido por timingSafeEqual.
+function safeEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a)
+  const bb = Buffer.from(b)
+  return ab.length === bb.length && timingSafeEqual(ab, bb)
+}
+
+// Aceita o Vercel Cron (`Authorization: Bearer <CRON_SECRET>`) e um
+// pinger externo (`x-cron-secret: <AUTOMATION_CRON_SECRET>`).
+function cronAuthorized(request: Request): boolean {
+  const secrets = [
+    process.env.CRON_SECRET,
+    process.env.AUTOMATION_CRON_SECRET,
+  ].filter(Boolean) as string[]
+  if (secrets.length === 0) return false
+  const bearer = (request.headers.get('authorization') ?? '').replace(
+    /^Bearer\s+/,
+    '',
+  )
+  const header = request.headers.get('x-cron-secret') ?? ''
+  return secrets.some((s) => safeEqual(bearer, s) || safeEqual(header, s))
+}
+
 export async function GET(request: Request) {
-  const expected = process.env.AUTOMATION_CRON_SECRET
-  if (!expected) {
+  if (!process.env.CRON_SECRET && !process.env.AUTOMATION_CRON_SECRET) {
     return NextResponse.json({ error: 'cron not configured' }, { status: 503 })
   }
-  // Constant-time compare so an attacker who can hit the endpoint
-  // can't recover the secret byte-by-byte from response-time deltas.
-  // Length pre-check is required by timingSafeEqual (throws otherwise)
-  // and leaks only the length itself, which isn't sensitive.
-  const supplied = request.headers.get('x-cron-secret') ?? ''
-  const suppliedBuf = Buffer.from(supplied)
-  const expectedBuf = Buffer.from(expected)
-  if (
-    suppliedBuf.length !== expectedBuf.length ||
-    !timingSafeEqual(suppliedBuf, expectedBuf)
-  ) {
+  if (!cronAuthorized(request)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

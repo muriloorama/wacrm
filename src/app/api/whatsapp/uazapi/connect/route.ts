@@ -44,6 +44,25 @@ async function resolveAccountId(
   return (data?.account_id as string) ?? null;
 }
 
+// Escrever em whatsapp_channels exige owner/admin.
+const WRITE_ROLES = new Set(["owner", "admin"]);
+
+// Papel do usuário na conta informada. Usa a função member_role
+// (SECURITY DEFINER) para ler account_members sem depender da RLS da
+// própria tabela, e assim dar uma mensagem de permissão correta em vez
+// de tratar qualquer erro de escrita como 403.
+async function resolveMemberRole(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  accountId: string,
+): Promise<string | null> {
+  const { data } = await supabase.rpc("member_role", {
+    p_user_id: userId,
+    p_account_id: accountId,
+  });
+  return (data as string | null) ?? null;
+}
+
 // O `ch` amarra a instância ao canal. Sem ele o webhook precisa adivinhar de
 // quem é a mensagem pelo nome da instância — e o uazapi aceita duas instâncias
 // com o mesmo nome, o que já fez mensagens serem descartadas.
@@ -123,6 +142,17 @@ export async function POST(request: Request) {
     }
 
     // ---- Criar um canal novo ----
+    // Escrita em whatsapp_channels é admin+ (RLS). Checa o papel aqui para
+    // que a falta de permissão dê uma mensagem correta — e para que um erro
+    // de insert por OUTRO motivo não seja disfarçado de "apenas admin".
+    const role = await resolveMemberRole(supabase, user.id, accountId);
+    if (!WRITE_ROLES.has(role ?? "")) {
+      return NextResponse.json(
+        { error: "Sem permissão para criar canais (apenas admin)." },
+        { status: 403 },
+      );
+    }
+
     // Valida o limite de canais da conta.
     const { count } = await supabase
       .from("whatsapp_channels")
@@ -157,9 +187,12 @@ export async function POST(request: Request) {
       .single();
 
     if (insertErr || !created) {
+      // O papel já foi validado acima, então isto é um erro real de banco,
+      // não de permissão.
+      console.error("Falha ao criar canal:", insertErr);
       return NextResponse.json(
-        { error: "Sem permissão para criar canais (apenas admin)." },
-        { status: 403 },
+        { error: "Não foi possível criar o canal. Tente novamente." },
+        { status: 500 },
       );
     }
 
@@ -183,9 +216,11 @@ export async function POST(request: Request) {
         // best-effort
       }
       await supabase.from("whatsapp_channels").delete().eq("id", channelId);
+      // Falha ao gravar o token da instância — não é permissão.
+      console.error("Falha ao salvar token do canal:", updateErr);
       return NextResponse.json(
-        { error: "Sem permissão para configurar canais (apenas admin)." },
-        { status: 403 },
+        { error: "Não foi possível salvar o canal. Tente novamente." },
+        { status: 500 },
       );
     }
 
@@ -335,6 +370,18 @@ export async function PATCH(request: Request) {
     );
   }
 
+  const accountId = await resolveAccountId(supabase, user.id);
+  if (!accountId) {
+    return NextResponse.json({ error: "Conta não encontrada." }, { status: 403 });
+  }
+  const role = await resolveMemberRole(supabase, user.id, accountId);
+  if (!WRITE_ROLES.has(role ?? "")) {
+    return NextResponse.json(
+      { error: "Sem permissão para renomear canais (apenas admin)." },
+      { status: 403 },
+    );
+  }
+
   const { data: updated, error: updateErr } = await supabase
     .from("whatsapp_channels")
     .update({ name: trimmed, updated_at: new Date().toISOString() })
@@ -343,9 +390,10 @@ export async function PATCH(request: Request) {
     .maybeSingle();
 
   if (updateErr) {
+    console.error("Falha ao renomear canal:", updateErr);
     return NextResponse.json(
-      { error: "Sem permissão para renomear canais (apenas admin)." },
-      { status: 403 },
+      { error: "Não foi possível renomear o canal. Tente novamente." },
+      { status: 500 },
     );
   }
   if (!updated) {
@@ -386,6 +434,18 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: "Canal não informado." }, { status: 400 });
   }
 
+  const accountId = await resolveAccountId(supabase, user.id);
+  if (!accountId) {
+    return NextResponse.json({ error: "Conta não encontrada." }, { status: 403 });
+  }
+  const role = await resolveMemberRole(supabase, user.id, accountId);
+  if (!WRITE_ROLES.has(role ?? "")) {
+    return NextResponse.json(
+      { error: "Sem permissão para remover canais (apenas admin)." },
+      { status: 403 },
+    );
+  }
+
   const { data: channel } = await supabase
     .from("whatsapp_channels")
     .select("id, uazapi_instance_token")
@@ -406,9 +466,10 @@ export async function DELETE(request: Request) {
     .eq("id", channelId);
 
   if (deleteErr) {
+    console.error("Falha ao remover canal:", deleteErr);
     return NextResponse.json(
-      { error: "Sem permissão para remover canais (apenas admin)." },
-      { status: 403 },
+      { error: "Não foi possível remover o canal. Tente novamente." },
+      { status: 500 },
     );
   }
 
