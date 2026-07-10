@@ -77,7 +77,10 @@ const WELCOME_MENU: FlowTemplate = {
     "Cumprimente clientes que digitam uma palavra-chave e direcione-os ao agente certo conforme sejam novos ou já clientes.",
   icon: "MessageSquare",
   trigger_type: "keyword",
-  trigger_config: { keywords: ["support", "help", "hi"], match_type: "contains" },
+  trigger_config: {
+    keywords: ["oi", "olá", "ola", "menu", "ajuda", "suporte", "atendimento"],
+    match_type: "contains",
+  },
   entry_node_id: "start",
   nodes: [
     {
@@ -133,7 +136,7 @@ const FAQ_BOT: FlowTemplate = {
   icon: "HelpCircle",
   trigger_type: "keyword",
   trigger_config: {
-    keywords: ["faq", "question", "info"],
+    keywords: ["faq", "dúvida", "duvida", "pergunta", "perguntas", "informações", "informacoes"],
     match_type: "contains",
   },
   entry_node_id: "start",
