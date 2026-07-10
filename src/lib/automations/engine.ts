@@ -630,8 +630,17 @@ async function evaluateCondition(cfg: ConditionStepConfig, args: ExecuteArgs): P
       // (supports over-midnight ranges like "18:00-09:00").
       const [from, to] = (cfg.operand ?? '').split('-')
       if (!from || !to) return false
-      const now = new Date()
-      const mins = now.getHours() * 60 + now.getMinutes()
+      // Avalia no fuso de São Paulo (BRT). Sem isto, na Vercel (UTC) a
+      // janela erra por 3h — o out_of_office respondia fora de hora.
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/Sao_Paulo',
+        hour: '2-digit',
+        minute: '2-digit',
+        hourCycle: 'h23',
+      }).formatToParts(new Date())
+      const nowH = Number(parts.find((p) => p.type === 'hour')?.value ?? '0')
+      const nowM = Number(parts.find((p) => p.type === 'minute')?.value ?? '0')
+      const mins = nowH * 60 + nowM
       const parse = (s: string) => {
         const [h, m] = s.split(':').map(Number)
         return (h || 0) * 60 + (m || 0)

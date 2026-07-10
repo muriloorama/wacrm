@@ -5,7 +5,7 @@ import { supabaseAdmin } from "@/lib/automations/admin-client";
 import { normalizePhone } from "@/lib/whatsapp/phone-utils";
 import { findExistingContact, isUniqueViolation } from "@/lib/contacts/dedupe";
 import { decrypt } from "@/lib/whatsapp/encryption";
-import { downloadMedia } from "@/lib/whatsapp/uazapi-api";
+import { downloadMedia, getInstanceStatus } from "@/lib/whatsapp/uazapi-api";
 import { isB2Configured, uploadBuffer, publicUrl } from "@/lib/storage/b2";
 import { runAutomationsForTrigger } from "@/lib/automations/engine";
 import { dispatchInboundToFlows } from "@/lib/flows/engine";
@@ -142,8 +142,10 @@ async function processWebhook(
     account_id: string;
     created_by: string | null;
     uazapi_instance_token: string | null;
+    status: string | null;
   };
-  const CHANNEL_COLS = "id, account_id, created_by, uazapi_instance_token";
+  const CHANNEL_COLS =
+    "id, account_id, created_by, uazapi_instance_token, status";
   let channel: ChannelRow | null = null;
 
   // 0) Dica explícita via ?ch=<id> (canais migrados). Tem prioridade máxima.
@@ -263,6 +265,16 @@ async function processWebhook(
     data.reaction !== undefined ||
     Boolean(data.fileURL);
   if (looksLikeMessage) {
+    // Auto-cura: receber/enviar mensagem prova que o canal está conectado.
+    // Corrige canais presos em "disconnected" no banco (ex.: que conectaram
+    // antes deste handler existir) sem exigir um novo scan.
+    if (channel.status !== "connected") {
+      void db
+        .from("whatsapp_channels")
+        .update({ status: "connected", updated_at: new Date().toISOString() })
+        .eq("id", channel.id);
+    }
+
     // Ignora mensagens de SISTEMA do gateway (grupo de status/serviço,
     // broadcasts, etc.). Não devem virar contato/conversa/mensagem no CRM.
     // Vale tanto para entrada quanto para saída (fromMe).
@@ -321,7 +333,52 @@ async function processWebhook(
     return;
   }
 
-  // "connection" e demais eventos não têm efeito no inbox — ignoramos.
+  // 4) Evento de CONEXÃO (scan do QR, logout no celular). Antes era
+  // ignorado, então whatsapp_channels.status ficava "disconnected" no banco
+  // mesmo após conectar — e o inbox mostrava "WhatsApp não conectado" para
+  // sempre. Consulta o status autoritativo no provedor e sincroniza.
+  if (
+    ev.startsWith("connection") ||
+    ev === "connected" ||
+    ev === "disconnected"
+  ) {
+    const token = channel.uazapi_instance_token
+      ? decrypt(channel.uazapi_instance_token)
+      : "";
+    await syncChannelConnection(db, channel.id, token);
+    return;
+  }
+
+  // demais eventos não têm efeito no inbox — ignoramos.
+}
+
+// Sincroniza whatsapp_channels.status/phone com o estado real da instância
+// no provedor. Mesma leitura que a tela de Configurações (GET) faz.
+async function syncChannelConnection(
+  db: SupabaseClient,
+  channelId: string,
+  token: string,
+) {
+  if (!token) return;
+  try {
+    const status = await getInstanceStatus(token);
+    const connected = status.status?.connected ?? false;
+    const owner = status.instance?.owner?.trim();
+    const jidDigits = status.status?.jid
+      ? String(status.status.jid).split(/[:@]/)[0]
+      : "";
+    const phone = connected ? owner || jidDigits || null : null;
+    await db
+      .from("whatsapp_channels")
+      .update({
+        status: connected ? "connected" : "disconnected",
+        ...(phone ? { phone } : {}),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", channelId);
+  } catch (err) {
+    console.error("[uazapi-webhook] falha ao sincronizar conexão:", err);
+  }
 }
 
 // ------------------------------------------------------------
