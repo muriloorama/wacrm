@@ -347,10 +347,66 @@ function FlowCanvasInner() {
   }, [builderNodes, entryNodeId, flashKey, autoLayoutPositions]);
 
   const [rfNodes, setRfNodes] = useState<RfNode<NodeData>[]>(derivedRfNodes);
+  // Mirror of `rfNodes` so the reconcile effect below can read the
+  // latest list (including React-Flow's own measurement writes made via
+  // `handleNodesChange`) without taking `rfNodes` as an effect
+  // dependency — which would re-run the effect on every measurement and
+  // defeat the whole point.
+  const rfNodesRef = useRef(rfNodes);
+
+  // Reconcile the React-Flow node list with the derived one WITHOUT
+  // blowing away React-Flow's own per-node bookkeeping.
+  //
+  // The naive version of this effect — `setRfNodes(derivedRfNodes)` —
+  // replaces every node object on every derived change, which strips
+  // the `measured` size / `handleBounds` React-Flow attaches after it
+  // lays a node out. React-Flow then has to re-measure the whole graph,
+  // which (in the browser, with real layout + fitView) can feed back
+  // into another render and, under the wrong timing, spin into a
+  // main-thread-blocking re-measure loop when a node is added.
+  //
+  // Instead we merge by id: reuse the existing node object (keeping its
+  // measured size) whenever its position and our derived data haven't
+  // changed, only swapping in the derived `position` / `data` when they
+  // actually differ, and adopting brand-new nodes as-is. When nothing
+  // moved we skip `setRfNodes` entirely, so an effect run triggered by a
+  // new-but-equivalent `derivedRfNodes` identity is a genuine no-op
+  // instead of forcing a needless re-render + re-measure.
+  const reconcileRfNodes = useCallback(
+    (derived: RfNode<NodeData>[]) => {
+      const prev = rfNodesRef.current;
+      const prevById = new Map(prev.map((n) => [n.id, n]));
+      let changed = prev.length !== derived.length;
+      const next = derived.map((d) => {
+        const existing = prevById.get(d.id);
+        if (!existing) {
+          changed = true;
+          return d;
+        }
+        const samePosition =
+          existing.position.x === d.position.x &&
+          existing.position.y === d.position.y;
+        const sameData =
+          existing.data.node === d.data.node &&
+          existing.data.isEntry === d.data.isEntry &&
+          existing.data.isFlashed === d.data.isFlashed;
+        if (samePosition && sameData) return existing;
+        changed = true;
+        // Preserve React-Flow-managed fields (measured, width/height,
+        // selected, dragging, handleBounds…) via the spread; only our
+        // authored position + data are refreshed.
+        return { ...existing, position: d.position, data: d.data };
+      });
+      if (!changed) return;
+      rfNodesRef.current = next;
+      setRfNodes(next);
+    },
+    [],
+  );
 
   useEffect(() => {
-    setRfNodes(derivedRfNodes);
-  }, [derivedRfNodes]);
+    reconcileRfNodes(derivedRfNodes);
+  }, [derivedRfNodes, reconcileRfNodes]);
 
   const rfEdges = useMemo(() => {
     const canvasEdges = deriveCanvasEdges(builderNodes);
@@ -377,7 +433,13 @@ function FlowCanvasInner() {
 
   const handleNodesChange = useCallback(
     (changes: NodeChange<RfNode<NodeData>>[]) => {
-      setRfNodes((nodes) => applyNodeChanges(changes, nodes));
+      setRfNodes((nodes) => {
+        const updated = applyNodeChanges(changes, nodes);
+        // Keep the reconcile effect's mirror in step with React-Flow's
+        // own measurement / drag writes so it doesn't clobber them.
+        rfNodesRef.current = updated;
+        return updated;
+      });
     },
     []
   );
