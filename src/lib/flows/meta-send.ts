@@ -6,7 +6,10 @@ import {
   type MediaKind,
 } from '@/lib/whatsapp/meta-api'
 import { getProvider } from '@/lib/whatsapp/provider'
-import { resolveProviderConfig } from '@/lib/whatsapp/provider-config'
+import {
+  resolveProviderConfig,
+  resolveAccountConfigRow,
+} from '@/lib/whatsapp/provider-config'
 import {
   sanitizePhoneForMeta,
   isValidE164,
@@ -76,12 +79,10 @@ export async function engineSendText(
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
 
-  const { data: config, error: configErr } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', args.accountId)
-    .single()
-  if (configErr || !config) {
+  // Resolve o provider pelo canal da conversa (uazapi/QR) OU whatsapp_config
+  // (Meta). Antes só lia whatsapp_config → contas só-uazapi não enviavam.
+  const config = await resolveAccountConfigRow(db, args.accountId, args.contactId)
+  if (!config) {
     throw new Error('WhatsApp not configured for this account')
   }
 
@@ -180,12 +181,10 @@ export async function engineSendMedia(
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
 
-  const { data: config, error: configErr } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', args.accountId)
-    .single()
-  if (configErr || !config) {
+  // Resolve o provider pelo canal da conversa (uazapi/QR) OU whatsapp_config
+  // (Meta). Antes só lia whatsapp_config → contas só-uazapi não enviavam.
+  const config = await resolveAccountConfigRow(db, args.accountId, args.contactId)
+  if (!config) {
     throw new Error('WhatsApp not configured for this account')
   }
 
@@ -330,12 +329,9 @@ async function sendInteractiveViaMeta(
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
 
-  const { data: config, error: configErr } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', input.accountId)
-    .single()
-  if (configErr || !config) {
+  // Resolve pelo canal da conversa (uazapi/QR) OU whatsapp_config (Meta).
+  const config = await resolveAccountConfigRow(db, input.accountId, input.contactId)
+  if (!config) {
     throw new Error('WhatsApp not configured for this account')
   }
 

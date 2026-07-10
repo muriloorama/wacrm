@@ -2,6 +2,7 @@ import { sendTemplateMessage } from '@/lib/whatsapp/meta-api'
 import { getProvider } from '@/lib/whatsapp/provider'
 import {
   resolveProviderConfig,
+  resolveAccountConfigRow,
   renderTemplateBody,
 } from '@/lib/whatsapp/provider-config'
 import {
@@ -87,17 +88,18 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
 
-  const { data: config, error: configErr } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', input.accountId)
-    .single()
-  if (configErr || !config) {
+  // Resolve o provider pelo CANAL da conversa do contato (uazapi/QR) OU
+  // whatsapp_config (Meta). Antes só lia whatsapp_config → automações não
+  // enviavam nada em contas só-uazapi.
+  const config = await resolveAccountConfigRow(
+    db,
+    input.accountId,
+    input.contactId,
+  )
+  if (!config) {
     throw new Error('WhatsApp not configured for this account')
   }
 
-  // Resolve o provider da conta (Meta OU uazapi) e decripta o token
-  // do provider em uso, em vez de assumir Meta.
   const pc = resolveProviderConfig(config)
   const provider = getProvider(pc)
 

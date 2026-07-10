@@ -11,6 +11,8 @@ import "server-only";
 // centralizada aqui para não duplicar decrypt/branch por arquivo.
 // ============================================================
 
+import type { SupabaseClient } from "@supabase/supabase-js";
+
 import { decrypt } from "@/lib/whatsapp/encryption";
 import type { ProviderConfig, WhatsAppProviderKind } from "@/lib/whatsapp/provider";
 import type { MessageTemplate } from "@/types";
@@ -64,6 +66,65 @@ export function resolveProviderConfig(
     accessToken: decrypt(config.access_token),
     uazapiToken: undefined,
   };
+}
+
+/**
+ * Resolve a LINHA de config do provider de uma conta, na mesma ordem de
+ * prioridade do envio do inbox (send-message.ts): o CANAL da conversa do
+ * contato tem prioridade; senão a whatsapp_config (Meta) da conta; senão
+ * qualquer canal uazapi conectado da conta. Retorna null se não houver
+ * nenhum meio de envio.
+ *
+ * Sem isto, os senders de fluxo/automação só liam whatsapp_config e
+ * estouravam "WhatsApp not configured" em contas SÓ-uazapi (QR Code) —
+ * ou seja, fluxos e automações não enviavam nada para elas.
+ */
+export async function resolveAccountConfigRow(
+  db: SupabaseClient,
+  accountId: string,
+  contactId?: string | null,
+): Promise<ProviderConfigRow | null> {
+  // 1) Canal da conversa mais recente do contato (uazapi por QR).
+  if (contactId) {
+    const { data: conv } = await db
+      .from("conversations")
+      .select("channel_id")
+      .eq("account_id", accountId)
+      .eq("contact_id", contactId)
+      .order("last_message_at", { ascending: false, nullsFirst: false })
+      .limit(1)
+      .maybeSingle();
+    const channelId = (conv?.channel_id as string | null) ?? null;
+    if (channelId) {
+      const { data: ch } = await db
+        .from("whatsapp_channels")
+        .select("provider, uazapi_instance_token")
+        .eq("id", channelId)
+        .maybeSingle();
+      if (ch) return ch as ProviderConfigRow;
+    }
+  }
+
+  // 2) whatsapp_config da conta (Meta, ou uazapi configurado por lá).
+  const { data: cfg } = await db
+    .from("whatsapp_config")
+    .select("provider, phone_number_id, access_token, uazapi_instance_token")
+    .eq("account_id", accountId)
+    .maybeSingle();
+  if (cfg) return cfg as ProviderConfigRow;
+
+  // 3) Qualquer canal uazapi conectado da conta.
+  const { data: ch } = await db
+    .from("whatsapp_channels")
+    .select("provider, uazapi_instance_token")
+    .eq("account_id", accountId)
+    .eq("status", "connected")
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (ch) return ch as ProviderConfigRow;
+
+  return null;
 }
 
 /**
