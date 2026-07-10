@@ -66,25 +66,25 @@ export function parseContactCsv(text: string): ParseContactCsvResult {
     if (!line) continue;
 
     const values = parseCsvLine(line);
-    const phone = values[phoneIdx]?.replace(/["']/g, '').trim();
+    const phone = values[phoneIdx]?.trim();
     if (!phone) continue;
 
     rows.push({
       phone,
       name:
         nameIdx >= 0
-          ? values[nameIdx]?.replace(/["']/g, '').trim() || undefined
+          ? values[nameIdx]?.trim() || undefined
           : undefined,
       email:
         emailIdx >= 0
-          ? values[emailIdx]?.replace(/["']/g, '').trim() || undefined
+          ? values[emailIdx]?.trim() || undefined
           : undefined,
       company:
         companyIdx >= 0
-          ? values[companyIdx]?.replace(/["']/g, '').trim() || undefined
+          ? values[companyIdx]?.trim() || undefined
           : undefined,
       tagNames:
-        tagsIdx >= 0 ? parseTagCell(values[tagsIdx]?.replace(/["']/g, '')) : [],
+        tagsIdx >= 0 ? parseTagCell(values[tagsIdx]) : [],
     });
   }
 
@@ -101,9 +101,16 @@ function parseCsvLine(line: string): string[] {
   let current = '';
   let inQuotes = false;
 
-  for (const char of line) {
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
     if (char === '"') {
-      inQuotes = !inQuotes;
+      if (inQuotes && line[i + 1] === '"') {
+        // Aspa escapada ("") dentro de campo entre aspas → uma aspa literal.
+        current += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
     } else if (char === ',' && !inQuotes) {
       values.push(current.trim());
       current = '';

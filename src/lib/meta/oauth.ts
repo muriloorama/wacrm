@@ -149,11 +149,27 @@ export interface MetaPage {
 
 /** Páginas que o usuário administra, já com o page token de cada uma. */
 export async function listPages(userToken: string): Promise<MetaPage[]> {
-  const data = await graph<{ data?: MetaPage[] }>('/me/accounts', {
-    access_token: userToken,
-    fields: 'id,name,access_token',
-  });
-  return data.data ?? [];
+  // O /me/accounts pagina (default ~25 por página). Sem seguir o cursor,
+  // um gestor com muitas páginas não via as que caíam fora da 1ª página —
+  // elas nem apareciam na tela de escolha nem podiam ser conectadas.
+  const pages: MetaPage[] = [];
+  let after: string | undefined;
+  for (let i = 0; i < 50; i++) {
+    const params: Record<string, string> = {
+      access_token: userToken,
+      fields: 'id,name,access_token',
+      limit: '100',
+    };
+    if (after) params.after = after;
+    const data = await graph<{
+      data?: MetaPage[];
+      paging?: { cursors?: { after?: string }; next?: string };
+    }>('/me/accounts', params);
+    if (data.data?.length) pages.push(...data.data);
+    after = data.paging?.cursors?.after;
+    if (!data.paging?.next || !after || !data.data?.length) break;
+  }
+  return pages;
 }
 
 /**
