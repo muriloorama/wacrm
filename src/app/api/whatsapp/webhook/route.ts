@@ -354,18 +354,27 @@ async function handleStatusUpdate(status: {
   timestamp: string
   recipient_id: string
 }) {
-  // 1) Mirror onto messages (legacy behavior) — Meta's status values
-  //    already match the CHECK constraint on messages.status. No
-  //    `.select()`: message_id is NOT unique (migration 009 — Meta ids
-  //    repeat across numbers), so this updates 0..N rows and must not
-  //    assume a single row.
-  const { error: msgErr } = await supabaseAdmin()
+  // 1) Mirror onto messages. message_id is NOT unique (migration 009), so
+  //    buscamos as linhas e aplicamos a guarda de transição — sem ela, um
+  //    "delivered" reentregue DEPOIS de "read" fazia o tique azul regredir
+  //    para cinza. Só sobe na escada (nunca desce).
+  const { data: msgRows, error: msgFetchErr } = await supabaseAdmin()
     .from('messages')
-    .update({ status: status.status })
+    .select('id, status')
     .eq('message_id', status.id)
 
-  if (msgErr) {
-    console.error('Error updating message status:', msgErr)
+  if (msgFetchErr) {
+    console.error('Error fetching message for status update:', msgFetchErr)
+  }
+  for (const m of (msgRows ?? []) as { id: string; status: string }[]) {
+    if (!isValidStatusTransition(m.status, status.status)) continue
+    const { error: updErr } = await supabaseAdmin()
+      .from('messages')
+      .update({ status: status.status })
+      .eq('id', m.id)
+    if (updErr) {
+      console.error('Error updating message status:', updErr)
+    }
   }
 
   // Webhook fan-out for this status change happens at the END of this

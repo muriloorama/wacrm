@@ -252,7 +252,7 @@ async function processWebhook(
 
   // 2) Eventos de STATUS (messages_update / message_update / status).
   if (ev.includes("update") || ev === "status") {
-    await handleStatusUpdate(db, data);
+    await handleStatusUpdate(db, data, channel.account_id, channel.id);
     return;
   }
 
@@ -620,17 +620,23 @@ function mapUazapiStatus(raw: string | undefined): string | null {
   }
 }
 
-async function handleStatusUpdate(db: SupabaseClient, data: UazapiMessage) {
+async function handleStatusUpdate(
+  db: SupabaseClient,
+  data: UazapiMessage,
+  accountId: string,
+  channelId: string,
+) {
   const messageId = data.messageid;
   const incoming = mapUazapiStatus(data.status);
   if (!messageId || !incoming) return;
 
-  // message_id não é único (ids do WhatsApp repetem entre números), então
-  // buscamos as linhas correspondentes e atualizamos apenas as que sobem
-  // na escada de status.
+  // message_id não é único (ids do WhatsApp repetem entre números). Trazemos
+  // a conversa junto para ESCOPAR à conta/canal deste webhook — sem isto um
+  // status de uma conta podia sobrescrever o de outra. Só atualizamos as que
+  // sobem na escada de status.
   const { data: rows, error: fetchErr } = await db
     .from("messages")
-    .select("id, status")
+    .select("id, status, conversation:conversations(account_id, channel_id)")
     .eq("message_id", messageId);
 
   if (fetchErr) {
@@ -639,7 +645,16 @@ async function handleStatusUpdate(db: SupabaseClient, data: UazapiMessage) {
   }
   if (!rows || rows.length === 0) return;
 
-  for (const row of rows as { id: string; status: string }[]) {
+  type ConvRef = { account_id: string; channel_id: string | null };
+  type Row = { id: string; status: string; conversation: ConvRef | ConvRef[] | null };
+  for (const row of rows as unknown as Row[]) {
+    // supabase tipa o embed como array; no runtime, relação many-to-one
+    // vem como objeto. Normaliza os dois casos.
+    const conv = Array.isArray(row.conversation)
+      ? row.conversation[0]
+      : row.conversation;
+    if (!conv || conv.account_id !== accountId) continue; // escopo de conta
+    if (conv.channel_id && conv.channel_id !== channelId) continue; // e de canal
     if (!isValidStatusTransition(row.status, incoming)) continue;
     const { error: updErr } = await db
       .from("messages")
