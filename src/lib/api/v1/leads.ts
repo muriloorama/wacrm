@@ -112,6 +112,10 @@ export async function ingestLead(
     contactId,
     pipelineId,
     stageId,
+    // Respostas do formulário vão no NEGÓCIO também. Antes só iam na nota
+    // do contato, que é descartada quando o contato já existe — então numa
+    // re-submissão (nova oportunidade) as respostas se perdiam.
+    notes: input.notes ?? null,
   });
 
   const contact = await getContactById(db, accountId, contactId);

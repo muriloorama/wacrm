@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { fetchAllRange } from "@/lib/supabase/paginate";
 import type { Pipeline, PipelineStage, Deal, Tag } from "@/types";
 import { PipelineBoard } from "@/components/pipelines/pipeline-board";
 import { PipelineSettings } from "@/components/pipelines/pipeline-settings";
@@ -97,12 +98,18 @@ export default function PipelinesPage() {
 
   const loadDeals = useCallback(
     async (pipelineId: string) => {
-      const { data } = await supabase
-        .from("deals")
-        .select("*, contact:contacts(*), assignee:profiles!deals_assigned_to_fkey(*)")
-        .eq("pipeline_id", pipelineId)
-        .order("created_at", { ascending: false });
-      const deals = (data ?? []) as Deal[];
+      // Paginado: funis com >1000 negócios perdiam os excedentes no board.
+      const data = await fetchAllRange<Deal>((from, to) =>
+        supabase
+          .from("deals")
+          .select(
+            "*, contact:contacts(*), assignee:profiles!deals_assigned_to_fkey(*)",
+          )
+          .eq("pipeline_id", pipelineId)
+          .order("created_at", { ascending: false })
+          .range(from, to),
+      ).catch(() => [] as Deal[]);
+      const deals = data;
 
       // Hidrata as etiquetas de cada contato numa query separada, pela junção
       // contact_tags (mesmo padrão usado no inbox). Fazer isso via embed

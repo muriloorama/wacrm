@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+import { fetchAllRange } from "@/lib/supabase/paginate";
 import { useAuth } from "@/hooks/use-auth";
 import { CURRENCIES } from "@/lib/currency";
 import { OrigemSelect } from "@/components/inbox/origem-select";
@@ -124,12 +125,16 @@ export function DealForm({
     if (!open) return;
     let cancelled = false;
     (async () => {
-      const [c, p] = await Promise.all([
-        supabase.from("contacts").select("*").order("name"),
+      // Contatos paginados: com >1000 na conta, o dropdown perdia parte
+      // deles e não dava pra criar negócio para esses contatos.
+      const [contactRows, p] = await Promise.all([
+        fetchAllRange<Contact>((from, to) =>
+          supabase.from("contacts").select("*").order("name").range(from, to),
+        ).catch(() => [] as Contact[]),
         supabase.from("profiles").select("*").order("full_name"),
       ]);
       if (cancelled) return;
-      setContacts((c.data ?? []) as Contact[]);
+      setContacts(contactRows);
       setProfiles((p.data ?? []) as Profile[]);
     })();
     return () => {

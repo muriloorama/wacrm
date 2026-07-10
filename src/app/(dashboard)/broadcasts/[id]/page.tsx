@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { fetchAllRange } from '@/lib/supabase/paginate';
 import { Broadcast, BroadcastRecipient, RecipientStatus } from '@/types';
 import { Button } from '@/components/ui/button';
 import {
@@ -170,14 +171,17 @@ export default function BroadcastDetailPage() {
         if (bcError) throw bcError;
         setBroadcast(bc);
 
-        const { data: recs, error: recsError } = await supabase
-          .from('broadcast_recipients')
-          .select('*, contact:contacts(*)')
-          .eq('broadcast_id', broadcastId)
-          .order('created_at', { ascending: false });
-
-        if (recsError) throw recsError;
-        setRecipients(recs ?? []);
+        // Paginado: transmissões com >1000 destinatários mostravam/exportavam
+        // só os primeiros 1000 (teto do PostgREST), sem aviso.
+        const recs = await fetchAllRange<BroadcastRecipient>((from, to) =>
+          supabase
+            .from('broadcast_recipients')
+            .select('*, contact:contacts(*)')
+            .eq('broadcast_id', broadcastId)
+            .order('created_at', { ascending: false })
+            .range(from, to),
+        );
+        setRecipients(recs);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Falha ao carregar transmissão');
       } finally {
