@@ -224,7 +224,9 @@ interface ExecuteArgs {
   triggerEvent: string
 }
 
-async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
+type ScopeStatus = 'success' | 'partial' | 'failed'
+
+async function executeStepsFrom(args: ExecuteArgs): Promise<ScopeStatus> {
   const db = supabaseAdmin()
 
   const baseQuery = db
@@ -243,17 +245,17 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
 
   if (stepsErr) {
     await finalizeLog(args.logId, 'failed', stepsErr.message)
-    return
+    return 'failed'
   }
   if (!steps || steps.length === 0) {
     if (args.parentStepId === null && args.logId) {
       await finalizeLog(args.logId, 'success', null)
     }
-    return
+    return 'success'
   }
 
   const results: AutomationLogStepResult[] = []
-  let status: 'success' | 'partial' | 'failed' = 'success'
+  let status: ScopeStatus = 'success'
   let errorMessage: string | null = null
 
   for (const step of steps as AutomationStep[]) {
@@ -284,7 +286,7 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
       })
       status = 'partial'
       await appendResults(args.logId, results, status, errorMessage)
-      return
+      return status
     }
 
     try {
@@ -298,14 +300,22 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
           detail: `branch=${taken ? 'yes' : 'no'}`,
         })
         // Recurse into the chosen branch at position 0 (children use their
-        // own ordering within the branch scope).
-        await executeStepsFrom({
+        // own ordering within the branch scope). Propaga o status do branch
+        // para o escopo pai — antes uma FALHA dentro do branch não marcava o
+        // log como 'failed' (ficava 'success' mentindo sobre o estado real).
+        const childStatus = await executeStepsFrom({
           ...args,
           parentStepId: step.id,
           branch: taken ? 'yes' : 'no',
           startPosition: 0,
           logId: args.logId,
         })
+        if (childStatus === 'failed') {
+          status = 'failed'
+          if (!errorMessage) errorMessage = 'falha em uma etapa da condição'
+        } else if (childStatus === 'partial' && status === 'success') {
+          status = 'partial'
+        }
         continue
       }
 
@@ -336,6 +346,7 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
     // Nested branch — just append results; parent scope decides final status.
     await appendResults(args.logId, results, null, errorMessage)
   }
+  return status
 }
 
 async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string> {
