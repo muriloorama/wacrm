@@ -89,6 +89,12 @@ export interface SendMessageParams {
   /** Structured template params (header/body/buttons). */
   templateMessageParams?: unknown;
   replyToMessageId?: string | null;
+  /**
+   * Quem envia. Default 'agent' (humano/UI/API). 'bot' marca respostas do
+   * atendimento IA — grava messages.sender_type='bot' e NÃO pausa fluxos
+   * nem a própria IA (só um humano faz isso). Ver src/lib/ai/reply.ts.
+   */
+  senderType?: 'agent' | 'bot';
 }
 
 export interface SendMessageResult {
@@ -190,6 +196,7 @@ export async function sendMessageToConversation(
     templateParams,
     templateMessageParams,
     replyToMessageId,
+    senderType = 'agent',
   } = params;
 
   if (!conversationId) {
@@ -521,7 +528,7 @@ export async function sendMessageToConversation(
     .from('messages')
     .insert({
       conversation_id: conversationId,
-      sender_type: 'agent',
+      sender_type: senderType,
       content_type: messageType,
       content_text: contentText || null,
       media_url: mediaUrl || null,
@@ -551,27 +558,44 @@ export async function sendMessageToConversation(
     })
     .eq('id', conversationId);
 
-  // Pause any active Flow run for this contact — the agent stepping in
-  // is the strongest "yield, human is here" signal. Best-effort.
-  try {
-    const { error: pauseErr } = await supabaseAdmin()
-      .from('flow_runs')
-      .update({
-        status: 'paused_by_agent',
-        ended_at: new Date().toISOString(),
-        end_reason: 'agent_replied',
-      })
-      .eq('account_id', accountId)
-      .eq('contact_id', contact.id)
-      .eq('status', 'active');
-    if (pauseErr) {
-      console.error('[flows] pause-on-agent-send failed:', pauseErr.message);
+  // Um humano (ou a API) enviando é o "cede o lugar, tem gente aqui" mais
+  // forte: pausa fluxos ativos E o atendimento IA nesta conversa. Respostas
+  // da própria IA (senderType 'bot') NÃO disparam isso. Best-effort.
+  if (senderType !== 'bot') {
+    try {
+      const { error: pauseErr } = await supabaseAdmin()
+        .from('flow_runs')
+        .update({
+          status: 'paused_by_agent',
+          ended_at: new Date().toISOString(),
+          end_reason: 'agent_replied',
+        })
+        .eq('account_id', accountId)
+        .eq('contact_id', contact.id)
+        .eq('status', 'active');
+      if (pauseErr) {
+        console.error('[flows] pause-on-agent-send failed:', pauseErr.message);
+      }
+    } catch (err) {
+      console.error(
+        '[flows] pause-on-agent-send threw:',
+        err instanceof Error ? err.message : err
+      );
     }
-  } catch (err) {
-    console.error(
-      '[flows] pause-on-agent-send threw:',
-      err instanceof Error ? err.message : err
-    );
+
+    // Cala a IA nesta conversa até um humano reativar (toggle no inbox).
+    try {
+      await db
+        .from('conversations')
+        .update({ ai_paused: true })
+        .eq('id', conversationId)
+        .eq('account_id', accountId);
+    } catch (err) {
+      console.error(
+        '[ai] pause-on-agent-send threw:',
+        err instanceof Error ? err.message : err
+      );
+    }
   }
 
   return { messageId: messageRecord.id, whatsappMessageId: waMessageId };

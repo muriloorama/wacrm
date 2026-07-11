@@ -26,6 +26,7 @@ import {
   RefreshCw,
   PanelRightOpen,
   PanelRightClose,
+  Bot,
 } from "lucide-react";
 import { format, isToday, isYesterday, differenceInHours } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -167,9 +168,33 @@ export function MessageThread({
   contactPanelOpen,
   onToggleContactPanel,
 }: MessageThreadProps) {
-  const { user } = useAuth();
+  const { user, aiEnabled } = useAuth();
   const { getPresence, getRow, now } = usePresence();
   const [loading, setLoading] = useState(false);
+  // Atendimento IA por conversa: espelha conversations.ai_paused, com update
+  // otimista no toggle do header. Só aparece quando a conta tem IA ligada.
+  const [aiPaused, setAiPaused] = useState(conversation?.ai_paused ?? false);
+  const [aiToggling, setAiToggling] = useState(false);
+  useEffect(() => {
+    setAiPaused(conversation?.ai_paused ?? false);
+  }, [conversation?.id, conversation?.ai_paused]);
+  const toggleAiPaused = useCallback(async () => {
+    if (!conversation || aiToggling) return;
+    const next = !aiPaused;
+    setAiToggling(true);
+    setAiPaused(next); // otimista
+    const { error } = await createClient()
+      .from("conversations")
+      .update({ ai_paused: next })
+      .eq("id", conversation.id);
+    setAiToggling(false);
+    if (error) {
+      setAiPaused(!next); // rollback
+      toast.error("Falha ao atualizar a IA");
+      return;
+    }
+    toast.success(next ? "IA pausada nesta conversa" : "IA reativada");
+  }, [aiPaused, aiToggling, conversation]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -921,6 +946,30 @@ export function MessageThread({
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Toggle do Atendimento IA nesta conversa. Só aparece quando a
+              conta tem IA ligada. Bot aceso = IA respondendo; apagado = IA
+              pausada aqui (um humano assumiu ou pausou manualmente). */}
+          {aiEnabled && (
+            <button
+              type="button"
+              onClick={toggleAiPaused}
+              disabled={aiToggling}
+              aria-pressed={!aiPaused}
+              aria-label={aiPaused ? "Reativar IA nesta conversa" : "Pausar IA nesta conversa"}
+              title={
+                aiPaused
+                  ? "IA pausada — clique para reativar"
+                  : "IA ativa — clique para pausar"
+              }
+              className={cn(
+                "inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors hover:bg-muted disabled:opacity-60",
+                aiPaused ? "text-muted-foreground" : "text-primary",
+              )}
+            >
+              <Bot className="h-4 w-4" />
+            </button>
+          )}
+
           {/* Contact-panel toggle — desktop only. The contact sidebar
               eats a chunk of horizontal width that crowds the thread on
               smaller laptops; this lets agents reclaim it when they just

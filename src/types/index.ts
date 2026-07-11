@@ -177,6 +177,9 @@ export interface Conversation {
   archived?: boolean;
   /** Fixada (estilo WhatsApp): timestamp de fixação, ou null/ausente se não fixada. Sobe ao topo da lista. */
   pinned_at?: string | null;
+  /** Atendimento IA pausado nesta conversa (migration 055). Um humano
+   *  respondendo pausa automaticamente; reativa pelo toggle no inbox. */
+  ai_paused?: boolean;
   created_at: string;
   updated_at: string;
   contact?: Contact;

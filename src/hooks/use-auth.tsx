@@ -77,6 +77,8 @@ interface AccountSummary {
   /** Módulos alternáveis habilitados (migration 044). null = todos. Ver
    *  @/lib/modules e isModuleEnabled. */
   enabled_modules: string[] | null;
+  /** Atendimento IA ligado na conta (migration 055). */
+  ai_enabled: boolean;
 }
 
 interface AuthContextValue {
@@ -128,6 +130,8 @@ interface AuthContextValue {
    *  while loading or when no account is resolved, so callers can use
    *  it unconditionally. */
   defaultCurrency: string;
+  /** Atendimento IA ligado na conta ativa (migration 055). */
+  aiEnabled: boolean;
   /** True if `accountRole === 'owner'`. */
   isOwner: boolean;
   /** True if `accountRole === 'admin'` (does NOT include owner — use canManageMembers for "admin or above"). */
@@ -215,7 +219,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             // default_currency 021; logos 038; cores 039; origens 040;
             // enabled_modules 044.
             .select(
-              "id, name, default_currency, logo_light_url, logo_dark_url, accent_color, bubble_color, origens, enabled_modules",
+              "id, name, default_currency, logo_light_url, logo_dark_url, accent_color, bubble_color, origens, enabled_modules, ai_enabled",
             )
             .eq("id", data.account_id)
             .maybeSingle();
@@ -239,6 +243,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               enabled_modules: Array.isArray(account.enabled_modules)
                 ? (account.enabled_modules as string[])
                 : null,
+              ai_enabled: Boolean(account.ai_enabled),
             };
           }
         }
@@ -259,7 +264,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const { data: memberRows, error: membersErr } = await supabase
           .from("account_members")
           .select(
-            "account:accounts(id, name, default_currency, logo_light_url, logo_dark_url, accent_color, bubble_color, origens, enabled_modules)",
+            "account:accounts(id, name, default_currency, logo_light_url, logo_dark_url, accent_color, bubble_color, origens, enabled_modules, ai_enabled)",
           )
           .eq("user_id", userId);
         if (membersErr) {
@@ -283,6 +288,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                     enabled_modules: Array.isArray(a.enabled_modules)
                       ? (a.enabled_modules as string[])
                       : null,
+                    ai_enabled: Boolean(a.ai_enabled),
                   }
                 : null;
             })
@@ -480,6 +486,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         accounts,
         switchAccount,
         defaultCurrency: account?.default_currency ?? DEFAULT_CURRENCY,
+        aiEnabled: Boolean(account?.ai_enabled),
         ...derived,
       }}
     >
@@ -512,6 +519,7 @@ export function useAuth(): AuthContextValue {
       accounts: [],
       switchAccount: async () => {},
       defaultCurrency: DEFAULT_CURRENCY,
+      aiEnabled: false,
       accountId: null,
       accountRole: null,
       isOwner: false,

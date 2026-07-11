@@ -10,6 +10,7 @@ import { isB2Configured, uploadBuffer, publicUrl } from "@/lib/storage/b2";
 import { transcribeAudio, getAccountOpenAiKey } from "@/lib/whatsapp/transcribe";
 import { runAutomationsForTrigger } from "@/lib/automations/engine";
 import { dispatchInboundToFlows } from "@/lib/flows/engine";
+import { maybeAiRespond } from "@/lib/ai/reply";
 
 // ============================================================
 // Webhook de ENTRADA do provedor uazapi (uazapiGO).
@@ -1012,6 +1013,18 @@ async function processMessage(
           }).catch((err) =>
             console.error("[webhook] automação falhou:", err),
           );
+        }
+
+        // Atendimento IA: só quando nenhum fluxo assumiu a mensagem. A própria
+        // função checa se a conta tem IA ligada, se a conversa não está pausada
+        // e faz o debounce de rajada. Nunca lança.
+        if (!flowResult.consumed) {
+          await maybeAiRespond({
+            db,
+            accountId,
+            conversationId: conversation.id,
+            triggerMessageId: insertedMessageId,
+          });
         }
       } catch (err) {
         console.error("[webhook] dispatch fluxos/automações:", err);
