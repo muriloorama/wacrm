@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { formatCurrency } from "@/lib/currency";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import type { Contact, Deal, Tag, PipelineStage } from "@/types";
 import {
@@ -18,6 +19,10 @@ import {
   X,
   MapPin,
   Pencil,
+  ChevronDown,
+  Image as ImageIcon,
+  Play,
+  ImageOff,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -34,6 +39,187 @@ interface ContactSidebarProps {
   contact: Contact | null;
   // Propaga edições inline (ex.: nome) para o cabeçalho e a lista do pai.
   onContactUpdate?: (patch: Partial<Contact> & { id: string }) => void;
+}
+
+// Uma foto/vídeo trocado nas conversas do contato (para a seção "Mídias").
+type MediaItem = {
+  id: string;
+  content_type: "image" | "video";
+  media_url: string;
+  created_at: string;
+};
+
+// Seção recolhível do painel: fechada por padrão, clique no cabeçalho abre.
+function CollapsibleSection({
+  icon: Icon,
+  title,
+  defaultOpen = false,
+  children,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-2 px-1 py-1 text-xs font-medium uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground"
+      >
+        <Icon className="h-3 w-3 shrink-0" />
+        <span className="flex-1 text-left">{title}</span>
+        <ChevronDown
+          className={cn(
+            "h-3.5 w-3.5 shrink-0 transition-transform",
+            open && "rotate-180",
+          )}
+        />
+      </button>
+      {open && <div className="mt-2">{children}</div>}
+    </div>
+  );
+}
+
+// Resolve a URL da mídia: URLs públicas usam direto; as proxied (autenticadas)
+// viram blob via fetch. Espelha a lógica das bolhas de mensagem.
+function useMediaSrc(url: string) {
+  const [src, setSrc] = useState<string | null>(null);
+  const [error, setError] = useState(false);
+  useEffect(() => {
+    if (!url) return;
+    if (!url.startsWith("/api/whatsapp/media/")) {
+      setSrc(url);
+      return;
+    }
+    let active = true;
+    let blobUrl: string | null = null;
+    (async () => {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error("Failed to load media");
+        const blob = await res.blob();
+        blobUrl = URL.createObjectURL(blob);
+        if (active) setSrc(blobUrl);
+        else URL.revokeObjectURL(blobUrl);
+      } catch {
+        if (active) setError(true);
+      }
+    })();
+    return () => {
+      active = false;
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+    };
+  }, [url]);
+  return { src, error };
+}
+
+function MediaThumb({
+  item,
+  onOpen,
+}: {
+  item: MediaItem;
+  onOpen: (item: MediaItem, src: string) => void;
+}) {
+  const { src, error } = useMediaSrc(item.media_url);
+  if (error) {
+    return (
+      <div className="flex aspect-square items-center justify-center rounded-md bg-muted">
+        <ImageOff className="h-4 w-4 text-muted-foreground" />
+      </div>
+    );
+  }
+  if (!src) {
+    return <div className="aspect-square animate-pulse rounded-md bg-muted" />;
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(item, src)}
+      className="relative aspect-square overflow-hidden rounded-md bg-muted transition-opacity hover:opacity-90"
+    >
+      {item.content_type === "video" ? (
+        <>
+          <video src={src} className="h-full w-full object-cover" />
+          <span className="absolute inset-0 flex items-center justify-center bg-black/20">
+            <Play className="h-5 w-5 text-white" fill="white" />
+          </span>
+        </>
+      ) : (
+        <img src={src} alt="" className="h-full w-full object-cover" />
+      )}
+    </button>
+  );
+}
+
+// Grade de mídias + lightbox ao clicar. Fecha no ESC ou clicando no fundo.
+function MediaGrid({ items }: { items: MediaItem[] }) {
+  const [active, setActive] = useState<{ item: MediaItem; src: string } | null>(
+    null,
+  );
+  useEffect(() => {
+    if (!active) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setActive(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [active]);
+
+  if (items.length === 0) {
+    return (
+      <p className="px-1 text-xs text-muted-foreground">Nenhuma mídia ainda</p>
+    );
+  }
+  return (
+    <>
+      <div className="grid grid-cols-3 gap-1.5">
+        {items.map((it) => (
+          <MediaThumb
+            key={it.id}
+            item={it}
+            onOpen={(item, src) => setActive({ item, src })}
+          />
+        ))}
+      </div>
+      {active && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setActive(null)}
+          role="dialog"
+          aria-label="Mídia ampliada"
+        >
+          <button
+            type="button"
+            onClick={() => setActive(null)}
+            aria-label="Fechar"
+            className="absolute right-4 top-4 rounded-full bg-white/10 p-2 text-white transition-colors hover:bg-white/20"
+          >
+            <X className="h-5 w-5" />
+          </button>
+          {active.item.content_type === "video" ? (
+            <video
+              src={active.src}
+              controls
+              autoPlay
+              onClick={(e) => e.stopPropagation()}
+              className="max-h-full max-w-full rounded-lg"
+            />
+          ) : (
+            <img
+              src={active.src}
+              alt=""
+              onClick={(e) => e.stopPropagation()}
+              className="max-h-full max-w-full rounded-lg object-contain"
+            />
+          )}
+        </div>
+      )}
+    </>
+  );
 }
 
 export function ContactSidebar({
@@ -66,6 +252,8 @@ export function ContactSidebar({
   const [editingName, setEditingName] = useState(false);
   const [nameText, setNameText] = useState("");
   const [savingName, setSavingName] = useState(false);
+  // Fotos e vídeos trocados nas conversas do contato (seção "Mídias").
+  const [media, setMedia] = useState<MediaItem[]>([]);
 
   const fetchContactData = useCallback(async () => {
     if (!contact) return;
@@ -134,6 +322,27 @@ export function ContactSidebar({
           contact_tag_id: ct.id as string,
         }));
       setTags(mapped);
+    }
+
+    // Mídias (fotos/vídeos) de TODAS as conversas deste contato, mais
+    // recentes primeiro. Duas etapas para não depender de join/RLS aninhado.
+    const { data: convs } = await supabase
+      .from("conversations")
+      .select("id")
+      .eq("contact_id", contact.id);
+    const convIds = (convs ?? []).map((c) => c.id as string);
+    if (convIds.length > 0) {
+      const { data: mediaRows } = await supabase
+        .from("messages")
+        .select("id, content_type, media_url, created_at")
+        .in("conversation_id", convIds)
+        .in("content_type", ["image", "video"])
+        .not("media_url", "is", null)
+        .order("created_at", { ascending: false })
+        .limit(60);
+      setMedia((mediaRows ?? []) as MediaItem[]);
+    } else {
+      setMedia([]);
     }
   }, [contact, accountId]);
 
@@ -439,21 +648,16 @@ export function ContactSidebar({
           <div className="my-4 border-t border-border" />
 
           {/* Origem — de onde veio o lead */}
-          <div className="mb-4">
-            <div className="mb-2 flex items-center gap-2 px-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              <MapPin className="h-3 w-3" />
-              Origem
-            </div>
+          <CollapsibleSection icon={MapPin} title="Origem">
             <OrigemSelect contactId={contact.id} value={contact.origem} />
-          </div>
+          </CollapsibleSection>
+
+          {/* Divider */}
+          <div className="my-4 border-t border-border" />
 
           {/* Tags */}
-          <div>
-            <div className="flex items-center gap-2 px-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              <TagIcon className="h-3 w-3" />
-              Etiquetas
-            </div>
-            <div className="mt-2 flex flex-wrap items-center gap-1">
+          <CollapsibleSection icon={TagIcon} title="Etiquetas">
+            <div className="flex flex-wrap items-center gap-1">
               {tags.length === 0 ? (
                 <p className="px-1 text-xs text-muted-foreground">Nenhuma etiqueta</p>
               ) : (
@@ -516,31 +720,28 @@ export function ContactSidebar({
                 </DropdownMenu>
               );
             })()}
-          </div>
+          </CollapsibleSection>
 
           {/* Divider */}
           <div className="my-4 border-t border-border" />
 
           {/* Active Deals */}
-          <div>
-            <div className="flex items-center justify-between px-1">
-              <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                <Briefcase className="h-3 w-3" />
-                Negócios ativos
-              </div>
-              {defaultPipelineId && deals.length > 0 && (
+          <CollapsibleSection icon={Briefcase} title="Negócios ativos">
+            {defaultPipelineId && deals.length > 0 && (
+              <div className="mb-2 flex justify-end px-1">
                 <button
                   type="button"
                   onClick={createDeal}
                   disabled={creatingDeal}
                   title="Adicionar negócio"
-                  className="flex h-5 w-5 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+                  className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
                 >
                   <Plus className="h-3.5 w-3.5" />
+                  Adicionar
                 </button>
-              )}
-            </div>
-            <div className="mt-2 space-y-2">
+              </div>
+            )}
+            <div className="space-y-2">
               {deals.length === 0 ? (
                 defaultPipelineId ? (
                   <button
@@ -644,36 +845,38 @@ export function ContactSidebar({
                 ))
               )}
             </div>
-          </div>
+          </CollapsibleSection>
 
           {/* Divider */}
           <div className="my-4 border-t border-border" />
 
           {/* Nota única do contato — editável, salva ao sair do campo. */}
-          <div>
-            <div className="flex items-center justify-between px-1">
-              <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                <StickyNote className="h-3 w-3" />
-                Nota
-              </div>
-              {savingNote && (
-                <span className="text-[10px] text-muted-foreground">
-                  salvando…
-                </span>
-              )}
-            </div>
+          <CollapsibleSection icon={StickyNote} title="Nota">
+            {savingNote && (
+              <p className="mb-1 px-1 text-[10px] text-muted-foreground">
+                salvando…
+              </p>
+            )}
             <textarea
               value={noteText}
               onChange={(e) => setNoteText(e.target.value)}
               onBlur={saveNote}
               placeholder="Escreva uma nota sobre este contato..."
               rows={5}
-              className="mt-2 w-full resize-y rounded-lg border border-border bg-muted px-3 py-2 text-xs text-foreground placeholder-muted-foreground outline-none focus:border-primary/50"
+              className="w-full resize-y rounded-lg border border-border bg-muted px-3 py-2 text-xs text-foreground placeholder-muted-foreground outline-none focus:border-primary/50"
             />
             <p className="mt-1 px-1 text-[10px] text-muted-foreground">
               Salva automaticamente ao clicar fora.
             </p>
-          </div>
+          </CollapsibleSection>
+
+          {/* Divider */}
+          <div className="my-4 border-t border-border" />
+
+          {/* Mídias — fotos e vídeos trocados nas conversas do contato. */}
+          <CollapsibleSection icon={ImageIcon} title="Mídias">
+            <MediaGrid items={media} />
+          </CollapsibleSection>
         </div>
       </ScrollArea>
     </div>
