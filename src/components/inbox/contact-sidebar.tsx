@@ -17,6 +17,7 @@ import {
   Plus,
   X,
   MapPin,
+  Pencil,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -31,9 +32,14 @@ import { SmartAvatar } from "@/components/ui/smart-avatar";
 
 interface ContactSidebarProps {
   contact: Contact | null;
+  // Propaga edições inline (ex.: nome) para o cabeçalho e a lista do pai.
+  onContactUpdate?: (patch: Partial<Contact> & { id: string }) => void;
 }
 
-export function ContactSidebar({ contact }: ContactSidebarProps) {
+export function ContactSidebar({
+  contact,
+  onContactUpdate,
+}: ContactSidebarProps) {
   const { accountId, defaultCurrency } = useAuth();
   const [copied, setCopied] = useState(false);
   const [deals, setDeals] = useState<Deal[]>([]);
@@ -56,6 +62,10 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
   // Nota ÚNICA editável do contato (não é mais um log de várias notas).
   const [noteText, setNoteText] = useState("");
   const [savingNote, setSavingNote] = useState(false);
+  // Edição inline do nome do contato direto no cabeçalho do painel.
+  const [editingName, setEditingName] = useState(false);
+  const [nameText, setNameText] = useState("");
+  const [savingName, setSavingName] = useState(false);
 
   const fetchContactData = useCallback(async () => {
     if (!contact) return;
@@ -216,6 +226,37 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
     contact.notes = next || null;
   }, [contact, noteText]);
 
+  // Abre o editor inline do nome, pré-preenchendo com o nome atual.
+  const startEditingName = useCallback(() => {
+    if (!contact) return;
+    setNameText(contact.name ?? "");
+    setEditingName(true);
+  }, [contact]);
+
+  // Salva o nome (grava em contacts.name). Chamado no blur/Enter do campo.
+  const saveName = useCallback(async () => {
+    if (!contact) return;
+    const next = nameText.trim();
+    setEditingName(false);
+    if (next === (contact.name ?? "").trim()) return; // nada mudou
+    setSavingName(true);
+    const supabase = createClient();
+    const { error } = await supabase
+      .from("contacts")
+      .update({ name: next || null })
+      .eq("id", contact.id);
+    setSavingName(false);
+    if (error) {
+      toast.error("Falha ao salvar o nome");
+      return;
+    }
+    // Reflete localmente para o cabeçalho/avatar atualizarem sem refetch.
+    contact.name = next || undefined;
+    // Sobe a mudança para o pai (cabeçalho + lista de conversas).
+    onContactUpdate?.({ id: contact.id, name: next || undefined });
+    toast.success("Nome atualizado");
+  }, [contact, nameText, onContactUpdate]);
+
   if (!contact) {
     return (
       <div className="flex h-full w-70 items-center justify-center border-l border-border bg-card">
@@ -334,9 +375,38 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
                 className="h-16 w-16 rounded-full object-cover"
               />
             </div>
-            <h3 className="mt-3 text-sm font-semibold text-foreground">
-              {displayName}
-            </h3>
+            {editingName ? (
+              <input
+                type="text"
+                autoFocus
+                value={nameText}
+                onChange={(e) => setNameText(e.target.value)}
+                onBlur={saveName}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    saveName();
+                  } else if (e.key === "Escape") {
+                    setEditingName(false);
+                  }
+                }}
+                placeholder="Nome do contato"
+                className="mt-3 w-full rounded-md border border-input bg-background px-2 py-1 text-center text-sm font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={startEditingName}
+                disabled={savingName}
+                className="group mt-3 flex items-center gap-1.5 rounded-md px-2 py-1 transition-colors hover:bg-muted disabled:opacity-60"
+                title="Editar nome"
+              >
+                <h3 className="text-sm font-semibold text-foreground">
+                  {savingName ? nameText.trim() || contact.phone : displayName}
+                </h3>
+                <Pencil className="h-3 w-3 text-muted-foreground opacity-60 transition-opacity group-hover:opacity-100" />
+              </button>
+            )}
             {contact.company && (
               <p className="text-xs text-muted-foreground">{contact.company}</p>
             )}

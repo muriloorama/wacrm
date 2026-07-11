@@ -505,6 +505,19 @@ export default function InboxPage() {
   }, [router]);
 
 
+  // Edição inline de dados do contato no painel lateral (ex.: nome). Propaga
+  // a mudança para o cabeçalho e para a lista de conversas, sem refetch.
+  const handleContactUpdate = useCallback((patch: Partial<Contact>) => {
+    setActiveContact((prev) => (prev ? { ...prev, ...patch } : prev));
+    setConversations((prev) =>
+      prev.map((c) =>
+        c.contact && c.contact.id === patch.id
+          ? { ...c, contact: { ...c.contact, ...patch } }
+          : c,
+      ),
+    );
+  }, []);
+
   const handleMessagesLoaded = useCallback((loaded: Message[]) => {
     setMessages(loaded);
   }, []);
@@ -635,7 +648,10 @@ export default function InboxPage() {
             toggle — which is itself desktop-only — never affects it. */}
         {contactPanelOpen && (
           <div className="hidden lg:block">
-            <ContactSidebar contact={activeContact} />
+            <ContactSidebar
+              contact={activeContact}
+              onContactUpdate={handleContactUpdate}
+            />
           </div>
         )}
       </div>
