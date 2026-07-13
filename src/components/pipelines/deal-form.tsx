@@ -71,11 +71,14 @@ export function DealForm({
   const [contactId, setContactId] = useState("");
   const [stageId, setStageId] = useState("");
   const [assignedTo, setAssignedTo] = useState("");
+  // Caixa (canal) do negócio — define quem vê o card no Kanban (migration 056).
+  const [channelId, setChannelId] = useState("");
   const [expectedCloseDate, setExpectedCloseDate] = useState("");
   const [notes, setNotes] = useState("");
 
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [channels, setChannels] = useState<{ id: string; name: string }[]>([]);
   const [linkedConversation, setLinkedConversation] =
     useState<Conversation | null>(null);
 
@@ -105,6 +108,7 @@ export function DealForm({
       setContactId(deal.contact_id ?? "");
       setStageId(deal.stage_id);
       setAssignedTo(deal.assigned_to ?? "");
+      setChannelId(deal.channel_id ?? "");
       setExpectedCloseDate(deal.expected_close_date ?? "");
       setNotes(deal.notes ?? "");
     } else {
@@ -114,6 +118,7 @@ export function DealForm({
       setContactId("");
       setStageId(defaultStageId || stages[0]?.id || "");
       setAssignedTo("");
+      setChannelId("");
       setExpectedCloseDate("");
       setNotes("");
     }
@@ -127,15 +132,26 @@ export function DealForm({
     (async () => {
       // Contatos paginados: com >1000 na conta, o dropdown perdia parte
       // deles e não dava pra criar negócio para esses contatos.
-      const [contactRows, p] = await Promise.all([
+      const [contactRows, p, ch] = await Promise.all([
         fetchAllRange<Contact>((from, to) =>
           supabase.from("contacts").select("*").order("name").range(from, to),
         ).catch(() => [] as Contact[]),
         supabase.from("profiles").select("*").order("full_name"),
+        // Caixas visíveis ao usuário (RLS já limita ao que ele pode ver).
+        supabase
+          .from("whatsapp_channels")
+          .select("id, name")
+          .order("created_at", { ascending: true }),
       ]);
       if (cancelled) return;
       setContacts(contactRows);
       setProfiles((p.data ?? []) as Profile[]);
+      setChannels(
+        (ch.data ?? []).map((c) => ({
+          id: c.id as string,
+          name: (c.name as string) ?? "Caixa",
+        })),
+      );
     })();
     return () => {
       cancelled = true;
@@ -252,6 +268,9 @@ export function DealForm({
       pipeline_id: pipelineId,
       stage_id: stageId,
       assigned_to: assignedTo || null,
+      // "" = sem caixa. No INSERT, um trigger tenta derivar a caixa da
+      // conversa do contato quando isto vem null (migration 056).
+      channel_id: channelId || null,
       notes: notes.trim() || null,
       expected_close_date: expectedCloseDate || null,
     };
@@ -467,6 +486,26 @@ export function DealForm({
                   </option>
                 ))}
               </select>
+            </div>
+
+            <div className="grid gap-2">
+              <Label className="text-muted-foreground">Caixa (Inbox)</Label>
+              <select
+                value={channelId}
+                onChange={(e) => setChannelId(e.target.value)}
+                className="h-9 w-full rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary"
+              >
+                <option value="">Sem caixa (só admin vê)</option>
+                {channels.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+              <p className="text-[11px] text-muted-foreground">
+                Define quem vê este card no Kanban. Agentes só veem os cards
+                das caixas atribuídas a eles.
+              </p>
             </div>
 
             <div className="grid gap-2">
