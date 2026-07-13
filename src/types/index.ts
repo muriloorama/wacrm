@@ -360,6 +360,12 @@ export interface Deal {
    */
   contact_id: string | null;
   conversation_id?: string;
+  /**
+   * Caixa (canal) do negócio — migration 056. Controla a visibilidade
+   * no Kanban: admin vê tudo; agent/viewer só a caixa atribuída;
+   * NULL = visível só a admin.
+   */
+  channel_id?: string | null;
   assigned_to?: string;
   title: string;
   value: number;
