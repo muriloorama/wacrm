@@ -9,6 +9,7 @@ import {
 } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
+import { useAuth } from "@/hooks/use-auth"
 import {
   ArrowLeft,
   ChevronDown,
@@ -354,7 +355,7 @@ function ContactFieldSelect({
       <option value="name">Nome</option>
       <option value="email">E-mail</option>
       <option value="company">Empresa</option>
-      <option value="origem">Origem (id: ex. instagram)</option>
+      <option value="origem">Origem</option>
       {customFields.length > 0 && (
         <optgroup label="Campos personalizados">
           {customFields.map((f) => (
@@ -366,6 +367,51 @@ function ContactFieldSelect({
       )}
       {customValue && !knownCustom && (
         <option value={customValue}>{customValue} (campo desconhecido)</option>
+      )}
+    </select>
+  )
+}
+
+/** Value picker for the "origem" contact field: a dropdown of the account's
+ *  configured origins (same source as the inbox OrigemSelect — account.origens),
+ *  storing the origin id (e.g. "instagram"), which is what the engine writes to
+ *  contacts.origem. Falls back to a free-text input when the account has no
+ *  origins configured, so the action still works on accounts that never set
+ *  them up. An unknown saved value is preserved as a labelled option. */
+function OrigemFieldSelect({
+  value,
+  onChange,
+}: {
+  value: string
+  onChange: (v: string) => void
+}) {
+  const { account } = useAuth()
+  const origens = account?.origens ?? []
+  if (origens.length === 0) {
+    return (
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="id da origem (ex.: instagram)"
+        className="bg-muted text-foreground"
+      />
+    )
+  }
+  const known = origens.some((o) => o.id === value)
+  return (
+    <select
+      value={value || ""}
+      onChange={(e) => onChange(e.target.value)}
+      className={SELECT_CLASS}
+    >
+      <option value="">Selecione uma origem</option>
+      {origens.map((o) => (
+        <option key={o.id} value={o.id}>
+          {o.label}
+        </option>
+      ))}
+      {value && !known && (
+        <option value={value}>{value} (origem desconhecida)</option>
       )}
     </select>
   )
@@ -1228,25 +1274,34 @@ function StepEditor({
           )}
         </>
       )
-    case "update_contact_field":
+    case "update_contact_field": {
+      const contactField = (cfg.field as string) ?? "name"
       return (
         <>
           <FieldBlock label="Campo">
             <ContactFieldSelect
-              value={(cfg.field as string) ?? "name"}
+              value={contactField}
               onChange={(v) => set({ field: v })}
             />
           </FieldBlock>
           <FieldBlock label="Valor">
-            <Input
-              value={(cfg.value as string) ?? ""}
-              onChange={(e) => set({ value: e.target.value })}
-              placeholder="Texto ou {{ vars.x }} / {{ message.text }}"
-              className="bg-muted text-foreground"
-            />
+            {contactField === "origem" ? (
+              <OrigemFieldSelect
+                value={(cfg.value as string) ?? ""}
+                onChange={(v) => set({ value: v })}
+              />
+            ) : (
+              <Input
+                value={(cfg.value as string) ?? ""}
+                onChange={(e) => set({ value: e.target.value })}
+                placeholder="Texto ou {{ vars.x }} / {{ message.text }}"
+                className="bg-muted text-foreground"
+              />
+            )}
           </FieldBlock>
         </>
       )
+    }
     case "create_deal":
       return (
         <>
