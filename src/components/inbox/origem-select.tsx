@@ -27,12 +27,17 @@ export function OrigemSelect({
   contactId: string;
   value: string | null | undefined;
 }) {
-  const { account } = useAuth();
+  const { account, isOwner, isAdmin } = useAuth();
   const origens = account?.origens ?? [];
   const [origem, setOrigem] = useState<string | null>(value ?? null);
   const [saving, setSaving] = useState(false);
 
   if (origens.length === 0) return null;
+
+  // Regra (migration 057): contato que já tem origem só pode ser alterado
+  // por owner/admin. Agente/viewer só define quando está vazia. O banco
+  // também bloqueia; aqui é só a UX (evita o erro e deixa claro a trava).
+  const locked = !!origem && !isOwner && !isAdmin;
 
   // Base UI Select precisa do mapa value→rótulo para o trigger mostrar o nome.
   const items: Record<string, string> = {
@@ -64,9 +69,16 @@ export function OrigemSelect({
       value={origem ?? NONE}
       onValueChange={handleChange}
       items={items}
-      disabled={saving}
+      disabled={saving || locked}
     >
-      <SelectTrigger className="h-8 w-full border-border bg-muted text-sm text-foreground">
+      <SelectTrigger
+        className="h-8 w-full border-border bg-muted text-sm text-foreground"
+        title={
+          locked
+            ? "Origem já definida — só um admin pode alterar"
+            : undefined
+        }
+      >
         <span className="flex items-center gap-2">
           {current && (
             <span
