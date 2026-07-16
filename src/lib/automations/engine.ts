@@ -502,11 +502,18 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       // Defense in depth: scope the service-role write to the account so
       // a future caller that skips the entry-point ownership guard still
       // cannot write across tenants.
-      await db
+      let q = db
         .from('contacts')
         .update({ [cfg.field]: value, updated_at: new Date().toISOString() })
         .eq('id', args.contactId)
         .eq('account_id', args.automation.account_id)
+      // `origem`: o primeiro sinal vence, a mesma regra do caminho de
+      // formulário (ver src/lib/api/v1/leads.ts). Automação roda como
+      // service_role e portanto passa pelo trigger enforce_origem_lock:
+      // sem este guarda, uma saudação posterior reescreveria a origem que
+      // já tinha classificado o contato.
+      if (cfg.field === 'origem') q = q.is('origem', null)
+      await q
       return `${cfg.field} updated`
     }
 
