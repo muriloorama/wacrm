@@ -499,7 +499,7 @@ async function handleUazapiReaction(
     ? data.groupName || "Grupo"
     : data.senderName || phone;
 
-  const contact = await findOrCreateContact(
+  const contactOutcome = await findOrCreateContact(
     db,
     accountId,
     configOwnerUserId,
@@ -507,7 +507,8 @@ async function handleUazapiReaction(
     contactName,
     isGroupMsg,
   );
-  if (!contact) return;
+  if (!contactOutcome) return;
+  const contact = contactOutcome.contact;
 
   // Foto do contato: resolvida/espelhada FORA do caminho crítico (after()),
   // só quando ainda não temos foto (evita re-espelhar a cada evento).
@@ -834,7 +835,7 @@ async function processMessage(
   const mediaUrl = data.fileURL || null;
 
   // findOrCreate contato (rápido, SEM bloquear na foto).
-  const contact = await findOrCreateContact(
+  const contactOutcome = await findOrCreateContact(
     db,
     accountId,
     configOwnerUserId,
@@ -842,7 +843,8 @@ async function processMessage(
     contactName,
     isGroupMsg,
   );
-  if (!contact) return;
+  if (!contactOutcome) return;
+  const contact = contactOutcome.contact;
 
   // findOrCreate conversa (grava o canal de origem).
   const conversation = await findOrCreateConversation(
@@ -996,11 +998,17 @@ async function processMessage(
           | "new_message_received"
           | "keyword_match"
           | "first_inbound_message"
+          | "new_contact_created"
         )[] = [];
         if (!flowResult.consumed) {
           triggers.push("new_message_received", "keyword_match");
         }
         if (isFirstInbound) triggers.unshift("first_inbound_message");
+        // Paridade com o webhook da Meta (webhook/route.ts): só dispara
+        // quando ESTA entrega criou o contato. Sem isto as contas na uazapi
+        // nunca acionavam a automação "Novo contato → organiza", e o lead
+        // novo não virava card no funil.
+        if (contactOutcome.wasCreated) triggers.unshift("new_contact_created");
         for (const triggerType of triggers) {
           runAutomationsForTrigger({
             accountId,
@@ -1272,7 +1280,7 @@ async function findOrCreateContact(
   phone: string,
   name: string,
   isGroup = false,
-): Promise<ContactRow | null> {
+): Promise<{ contact: ContactRow; wasCreated: boolean } | null> {
   // NB: a resolução/espelhamento da FOTO saiu daqui para o caminho de
   // background (after() → resolveAndMirrorAvatar). Aqui só cria/atualiza o
   // contato rápido, sem bloquear na rede. O contato retornado com
@@ -1288,7 +1296,7 @@ async function findOrCreateContact(
       patch.updated_at = new Date().toISOString();
       await db.from("contacts").update(patch).eq("id", existing.id);
     }
-    return existing;
+    return { contact: existing, wasCreated: false };
   }
 
   const { data: newContact, error: createError } = await db
@@ -1309,13 +1317,15 @@ async function findOrCreateContact(
     // nosso lookup e o insert. Re-resolve em vez de perder a mensagem.
     if (isUniqueViolation(createError)) {
       const raced = await findExistingContact(db, accountId, phone);
-      if (raced) return raced;
+      // Quem perdeu a corrida não "criou": o new_contact_created é do
+      // vencedor, senão a automação rodaria duas vezes para o mesmo lead.
+      if (raced) return { contact: raced, wasCreated: false };
     }
     console.error("[webhook] erro ao criar contato:", createError);
     return null;
   }
 
-  return newContact;
+  return { contact: newContact, wasCreated: true };
 }
 
 async function findOrCreateConversation(
