@@ -361,6 +361,13 @@ export interface Deal {
   contact_id: string | null;
   conversation_id?: string;
   /**
+   * Última mensagem da conversa do contato (qualquer remetente), hidratada
+   * pelo board. Não é coluna de `deals`: vem de `conversations.last_message_at`.
+   * É o que ordena e o que o card mostra — `updated_at` não serve, muda por
+   * migration e não tem relação com atividade do lead.
+   */
+  last_message_at?: string | null;
+  /**
    * Caixa (canal) do negócio — migration 056. Controla a visibilidade
    * no Kanban: admin vê tudo; agent/viewer só a caixa atribuída;
    * NULL = visível só a admin.

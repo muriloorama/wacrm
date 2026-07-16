@@ -144,7 +144,42 @@ export default function PipelinesPage() {
             d.contact.tags = byContact.get(d.contact_id) ?? [];
           }
         }
+
+        // Última mensagem da conversa, por contato. O card mostra e o board
+        // ordena por isto: quem falou por último sobe. Um contato pode ter
+        // mais de uma conversa (canais diferentes), então fica a mais recente.
+        const { data: convRows } = await supabase
+          .from("conversations")
+          .select("contact_id, last_message_at")
+          .in("contact_id", contactIds);
+        const ultimaMsg = new Map<string, string>();
+        for (const c of (convRows ?? []) as {
+          contact_id: string | null;
+          last_message_at: string | null;
+        }[]) {
+          if (!c.contact_id || !c.last_message_at) continue;
+          const atual = ultimaMsg.get(c.contact_id);
+          if (!atual || c.last_message_at > atual) {
+            ultimaMsg.set(c.contact_id, c.last_message_at);
+          }
+        }
+        for (const d of deals) {
+          d.last_message_at = d.contact_id
+            ? ultimaMsg.get(d.contact_id) ?? null
+            : null;
+        }
       }
+
+      // Mais recente primeiro. Quem nunca trocou mensagem (lead de formulário
+      // que ainda não respondeu) vai para o fim, não some.
+      deals.sort((a, b) => {
+        const ta = a.last_message_at ?? "";
+        const tb = b.last_message_at ?? "";
+        if (ta && tb) return tb.localeCompare(ta);
+        if (ta) return -1;
+        if (tb) return 1;
+        return (b.created_at ?? "").localeCompare(a.created_at ?? "");
+      });
       return deals;
     },
     [supabase],

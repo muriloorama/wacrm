@@ -17,7 +17,7 @@ import {
 import type { Deal, PipelineStage } from "@/types";
 import { DealCard } from "./deal-card";
 import { Button } from "@/components/ui/button";
-import { Plus } from "lucide-react";
+import { Plus, Search } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { formatCurrency } from "@/lib/currency";
 
@@ -44,15 +44,32 @@ export function PipelineBoard({
     [stages],
   );
 
+  // Busca por nome ou telefone. O telefone é comparado só por dígitos, senão
+  // "(66) 9958-7348" nunca casaria com o que a pessoa digita.
+  const [busca, setBusca] = useState("");
+  const dealsFiltrados = useMemo(() => {
+    const q = busca.trim().toLowerCase();
+    if (!q) return deals;
+    const qDigitos = q.replace(/\D/g, "");
+    return deals.filter((d) => {
+      const nome = (d.contact?.name ?? "").toLowerCase();
+      const titulo = (d.title ?? "").toLowerCase();
+      if (nome.includes(q) || titulo.includes(q)) return true;
+      if (!qDigitos) return false;
+      const tel = (d.contact?.phone ?? "").replace(/\D/g, "");
+      return tel.includes(qDigitos);
+    });
+  }, [deals, busca]);
+
   const dealsByStage = useMemo(() => {
     const map = new Map<string, Deal[]>();
     for (const stage of sortedStages) map.set(stage.id, []);
-    for (const deal of deals) {
+    for (const deal of dealsFiltrados) {
       const bucket = map.get(deal.stage_id);
       if (bucket) bucket.push(deal);
     }
     return map;
-  }, [sortedStages, deals]);
+  }, [sortedStages, dealsFiltrados]);
 
   const sensors = useSensors(
     // 5px activation distance avoids clicks being interpreted as drags.
@@ -88,14 +105,36 @@ export function PipelineBoard({
     setActiveDealId(null);
   }
 
+  const totalFiltrado = dealsFiltrados.length;
+
   return (
-    <DndContext
-      sensors={sensors}
-      collisionDetection={closestCorners}
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
-      onDragCancel={handleDragCancel}
-    >
+    <div className="flex h-full flex-col gap-3">
+      <div className="relative shrink-0">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <input
+          type="search"
+          value={busca}
+          onChange={(e) => setBusca(e.target.value)}
+          placeholder="Buscar por nome ou telefone…"
+          aria-label="Buscar negócios por nome ou telefone"
+          className="h-9 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring sm:max-w-xs"
+        />
+        {busca.trim() ? (
+          <p className="mt-1 text-xs text-muted-foreground">
+            {totalFiltrado === 0
+              ? "Nenhum negócio encontrado."
+              : `${totalFiltrado} de ${deals.length} negócios`}
+          </p>
+        ) : null}
+      </div>
+
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCorners}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+        onDragCancel={handleDragCancel}
+      >
       {/* snap-x + snap-mandatory on mobile so swipes land the next
           stage cleanly at the viewport edge instead of mid-column.
           Disabled on lg+ where snapping would interfere with the
@@ -181,7 +220,8 @@ export function PipelineBoard({
           }
         }
       `}</style>
-    </DndContext>
+      </DndContext>
+    </div>
   );
 }
 

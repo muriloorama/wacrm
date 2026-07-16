@@ -70,7 +70,11 @@ export function DealCard({ deal, stage, onEdit, isOverlay }: DealCardProps) {
   const origem = deal.contact?.origem
     ? account?.origens.find((o) => o.id === deal.contact?.origem) ?? null
     : null;
-  const relative = tempoRelativo(deal.updated_at);
+  // Horário da última mensagem da conversa — é a atividade que o usuário
+  // acompanha. `updated_at` não serve: uma migration que toca a linha faz
+  // todos os cards mostrarem a mesma coisa. Sem conversa ainda, cai no
+  // updated_at só para não ficar vazio.
+  const relative = tempoRelativo(deal.last_message_at ?? deal.updated_at);
   // Etiquetas do contato (embedadas via contact_tags na query do board).
   const tags = deal.contact?.tags ?? [];
 
