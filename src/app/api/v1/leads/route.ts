@@ -28,21 +28,29 @@ import { ingestLead } from '@/lib/api/v1/leads';
 import { ContactError } from '@/lib/api/v1/contacts';
 import { DealError } from '@/lib/api/v1/deals';
 
+// The form builder labels its questions for humans ("Nome Completo",
+// "Whatsapp"), so the keys arrive capitalized and spaced. Match on a
+// folded key — lowercased, with spaces/underscores/hyphens collapsed —
+// and keep every KEYS entry below written in that same folded form.
+function foldKey(key: string): string {
+  return key.toLowerCase().trim().replace(/[\s_-]+/g, ' ');
+}
+
 /** First present string field among the given keys, trimmed. */
 function pickString(
-  body: Record<string, unknown>,
+  fields: Map<string, string>,
   keys: string[]
 ): string | undefined {
   for (const key of keys) {
-    const v = body[key];
-    if (typeof v === 'string' && v.trim()) return v.trim();
+    const v = fields.get(key);
+    if (v) return v;
   }
   return undefined;
 }
 
-const PHONE_KEYS = ['phone', 'whatsapp', 'telefone', 'celular'];
-const NAME_KEYS = ['name', 'nome'];
-const EMAIL_KEYS = ['email', 'e-mail'];
+const PHONE_KEYS = ['phone', 'whatsapp', 'telefone', 'celular', 'tel', 'fone'];
+const NAME_KEYS = ['name', 'nome', 'nome completo', 'full name', 'fullname'];
+const EMAIL_KEYS = ['email', 'e mail'];
 const COMPANY_KEYS = ['company', 'empresa'];
 const KNOWN_KEYS = new Set([
   ...PHONE_KEYS,
@@ -51,11 +59,22 @@ const KNOWN_KEYS = new Set([
   ...COMPANY_KEYS,
 ]);
 
+/** Non-empty string fields of the body, indexed by folded key. */
+function foldFields(body: Record<string, unknown>): Map<string, string> {
+  const fields = new Map<string, string>();
+  for (const [key, value] of Object.entries(body)) {
+    if (typeof value !== 'string' || !value.trim()) continue;
+    const folded = foldKey(key);
+    if (!fields.has(folded)) fields.set(folded, value.trim());
+  }
+  return fields;
+}
+
 /** Fold any body fields not already mapped to a contact column into a note. */
 function buildNoteFromExtraFields(body: Record<string, unknown>): string | null {
   const lines: string[] = [];
   for (const [key, value] of Object.entries(body)) {
-    if (KNOWN_KEYS.has(key)) continue;
+    if (KNOWN_KEYS.has(foldKey(key))) continue;
     if (typeof value !== 'string' || !value.trim()) continue;
     lines.push(`${key}: ${value.trim()}`);
   }
@@ -74,7 +93,9 @@ export async function POST(request: Request) {
       return fail('bad_request', 'Request body must be a JSON object', 400);
     }
 
-    const rawPhone = pickString(body, PHONE_KEYS);
+    const fields = foldFields(body);
+
+    const rawPhone = pickString(fields, PHONE_KEYS);
     if (!rawPhone) {
       return fail(
         'bad_request',
@@ -85,9 +106,9 @@ export async function POST(request: Request) {
 
     const { contact, deal } = await ingestLead(ctx.supabase, ctx.accountId, {
       phone: rawPhone,
-      name: pickString(body, NAME_KEYS),
-      email: pickString(body, EMAIL_KEYS),
-      company: pickString(body, COMPANY_KEYS),
+      name: pickString(fields, NAME_KEYS),
+      email: pickString(fields, EMAIL_KEYS),
+      company: pickString(fields, COMPANY_KEYS),
       notes: buildNoteFromExtraFields(body),
     });
 
