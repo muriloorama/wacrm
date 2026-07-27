@@ -170,16 +170,14 @@ export default function PipelinesPage() {
         }
       }
 
-      // Mais recente primeiro. Quem nunca trocou mensagem (lead de formulário
-      // que ainda não respondeu) vai para o fim, não some.
-      deals.sort((a, b) => {
-        const ta = a.last_message_at ?? "";
-        const tb = b.last_message_at ?? "";
-        if (ta && tb) return tb.localeCompare(ta);
-        if (ta) return -1;
-        if (tb) return 1;
-        return (b.created_at ?? "").localeCompare(a.created_at ?? "");
-      });
+      // Mais recente primeiro, misturando os dois relógios: quem trocou
+      // mensagem vale pela última mensagem, quem nunca trocou (lead de
+      // formulário que ainda não respondeu) vale pela data de criação.
+      // Antes esses leads iam para o FIM da coluna — um lead de 15 minutos
+      // ficava embaixo de 130 cards de semanas atrás, que é justamente o
+      // card mais urgente da coluna.
+      const recencia = (d: Deal) => d.last_message_at ?? d.created_at ?? "";
+      deals.sort((a, b) => recencia(b).localeCompare(recencia(a)));
       return deals;
     },
     [supabase],

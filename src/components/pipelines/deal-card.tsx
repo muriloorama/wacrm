@@ -71,10 +71,11 @@ export function DealCard({ deal, stage, onEdit, isOverlay }: DealCardProps) {
     ? account?.origens.find((o) => o.id === deal.contact?.origem) ?? null
     : null;
   // Horário da última mensagem da conversa — é a atividade que o usuário
-  // acompanha. `updated_at` não serve: uma migration que toca a linha faz
-  // todos os cards mostrarem a mesma coisa. Sem conversa ainda, cai no
-  // updated_at só para não ficar vazio.
-  const relative = tempoRelativo(deal.last_message_at ?? deal.updated_at);
+  // acompanha. Sem conversa ainda (lead de formulário que não respondeu),
+  // cai na data de criação: é a mesma régua que ordena a coluna. `updated_at`
+  // não serve de fallback — arrastar o card ou uma migration que toca a linha
+  // fazia o lead parecer recém-chegado.
+  const relative = tempoRelativo(deal.last_message_at ?? deal.created_at);
   // Etiquetas do contato (embedadas via contact_tags na query do board).
   const tags = deal.contact?.tags ?? [];
 

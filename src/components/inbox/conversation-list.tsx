@@ -61,6 +61,70 @@ const ALL_PIPELINES = "all";
 /** Valor do seletor quando nenhuma origem específica está selecionada. */
 const ALL_ORIGENS = "all";
 
+/**
+ * Contato que casa com a busca mas AINDA não tem conversa nenhuma — o caso
+ * do lead de formulário, que cria contato + card no funil e nunca cria
+ * conversa. Sem isto o agente busca o nome na caixa de entrada, recebe
+ * "Nenhuma conversa encontrada" e conclui que o lead se perdeu.
+ */
+type ContactMatch = {
+  id: string;
+  name: string | null;
+  phone: string | null;
+};
+
+/** A partir de quantos caracteres a busca vai ao banco procurar contatos. */
+const CONTACT_SEARCH_MIN = 2;
+
+/**
+ * Conversa do contato, criando uma se ele ainda não tiver nenhuma. Espelha o
+ * find-or-create de `/api/whatsapp/send`: uma conversa por contato, sem canal
+ * definido — o canal é resolvido no envio da primeira mensagem. Retorna
+ * `null` em qualquer falha (o chamador avisa o usuário).
+ */
+async function resolveConversationForContact(
+  accountId: string,
+  userId: string,
+  contactId: string,
+): Promise<Conversation | null> {
+  const supabase = createClient();
+
+  // Pode ter surgido uma conversa entre a busca e o clique (mensagem
+  // recebida): reusa em vez de criar uma órfã.
+  const { data: existente } = await supabase
+    .from("conversations")
+    .select("id")
+    .eq("account_id", accountId)
+    .eq("contact_id", contactId)
+    .order("last_message_at", { ascending: false, nullsFirst: false })
+    .limit(1)
+    .maybeSingle();
+
+  const conversationId =
+    (existente?.id as string | undefined) ??
+    (
+      await supabase
+        .from("conversations")
+        .insert({
+          account_id: accountId,
+          user_id: userId,
+          contact_id: contactId,
+        })
+        .select("id")
+        .single()
+    ).data?.id;
+
+  if (!conversationId) return null;
+
+  const { data: row } = await supabase
+    .from("conversations")
+    .select(CONVERSATION_SELECT)
+    .eq("id", conversationId)
+    .single();
+
+  return normalizeConversations(row ? [row] : [])[0] ?? null;
+}
+
 interface ConversationListProps {
   activeConversationId: string | null;
   onSelect: (conversation: Conversation) => void;
@@ -163,7 +227,11 @@ export function ConversationList({
   // Filtro por funil (pipeline). `null` = todos os funis. Quando um funil
   // está selecionado, `pipelineContactIds` guarda os contact_ids que têm
   // negócio (deal) nesse funil; só essas conversas passam no filtro.
-  const { accountId, account } = useAuth();
+  const { accountId, account, user } = useAuth();
+  // Contatos sem conversa que casam com a busca, e qual deles está sendo
+  // aberto (insert da conversa em andamento).
+  const [contactMatches, setContactMatches] = useState<ContactMatch[]>([]);
+  const [openingContactId, setOpeningContactId] = useState<string | null>(null);
   // Filtro por origem do lead. null = todas as origens.
   const [selectedOrigem, setSelectedOrigem] = useState<string | null>(null);
   const [pipelines, setPipelines] = useState<PipelineOption[]>([]);
@@ -465,6 +533,103 @@ export function ConversationList({
     archivedOverrides,
     pinnedOverrides,
   ]);
+
+  // Contatos que já têm conversa carregada — ficam de fora do fallback para
+  // a busca não mostrar a mesma pessoa duas vezes.
+  const contactIdsComConversa = useMemo(() => {
+    const s = new Set<string>();
+    for (const c of conversations) if (c.contact_id) s.add(c.contact_id);
+    return s;
+  }, [conversations]);
+
+  // Fallback da busca: procura CONTATOS no banco, não só nas conversas
+  // carregadas. Lead de formulário entra como contato + negócio, sem
+  // conversa, então a busca do inbox (client-side sobre `conversations`)
+  // nunca o encontrava. Debounce de 300ms para não consultar a cada tecla.
+  useEffect(() => {
+    const termo = search.trim();
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      if (termo.length < CONTACT_SEARCH_MIN) {
+        setContactMatches([]);
+        return;
+      }
+      const supabase = createClient();
+      // `,` `(` `)` e `*` são sintaxe do filtro `or` do PostgREST — deixá-los
+      // passar quebraria a query inteira em vez de não achar nada.
+      const seguro = termo.replace(/[,()*%\\]/g, " ").trim();
+      if (!seguro) return;
+      const digitos = seguro.replace(/\D/g, "");
+      const filtros = [`name.ilike.*${seguro}*`];
+      if (digitos.length >= 4) filtros.push(`phone.ilike.*${digitos}*`);
+
+      const { data } = await supabase
+        .from("contacts")
+        .select("id, name, phone")
+        .or(filtros.join(","))
+        .order("created_at", { ascending: false })
+        .limit(10);
+
+      if (cancelled) return;
+      setContactMatches(
+        (data ?? []).map((c) => ({
+          id: c.id as string,
+          name: (c.name as string | null) ?? null,
+          phone: (c.phone as string | null) ?? null,
+        })),
+      );
+    }, 300);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [search]);
+
+  // Só os que ainda não aparecem na lista de conversas. A guarda pelo termo
+  // evita exibir o resultado da busca anterior enquanto o debounce não roda.
+  const contatosSemConversa = useMemo(
+    () =>
+      search.trim().length < CONTACT_SEARCH_MIN
+        ? []
+        : contactMatches.filter((c) => !contactIdsComConversa.has(c.id)),
+    [contactMatches, contactIdsComConversa, search],
+  );
+
+  /**
+   * Abre (criando se preciso) a conversa de um contato que ainda não tem
+   * nenhuma. Espelha o find-or-create de `/api/whatsapp/send` — mesma
+   * conversa por contato, sem canal definido: o canal é resolvido no envio
+   * da primeira mensagem.
+   */
+  const abrirContato = useCallback(
+    async (contactId: string) => {
+      const userId = user?.id;
+      if (!accountId || !userId || openingContactId) return;
+      setOpeningContactId(contactId);
+
+      const conv = await resolveConversationForContact(
+        accountId,
+        userId,
+        contactId,
+      );
+      setOpeningContactId(null);
+
+      if (!conv) {
+        toast.error("Falha ao abrir conversa com este contato");
+        return;
+      }
+
+      // Injeta na lista do pai e abre a thread.
+      onConversationsLoadedRef.current([
+        conv,
+        ...conversations.filter((c) => c.id !== conv.id),
+      ]);
+      onSelect(conv);
+      setSearch("");
+    },
+    [accountId, user?.id, openingContactId, conversations, onSelect],
+  );
 
   const toggleTag = useCallback((id: string) => {
     setSelectedTagIds((prev) =>
@@ -997,7 +1162,7 @@ export function ConversationList({
           <div className="flex items-center justify-center py-12">
             <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
           </div>
-        ) : filtered.length === 0 ? (
+        ) : filtered.length === 0 && contatosSemConversa.length === 0 ? (
           <div className="px-4 py-12 text-center">
             <p className="text-sm text-muted-foreground">Nenhuma conversa encontrada</p>
           </div>
@@ -1027,6 +1192,44 @@ export function ConversationList({
                 onTogglePinned={togglePinned}
               />
             ))}
+
+            {/* Contatos que casam com a busca mas não têm conversa ainda —
+                tipicamente lead de formulário. Clicar abre a thread (criando
+                a conversa) para o agente dar o primeiro alô. */}
+            {contatosSemConversa.length > 0 && (
+              <div className="border-t border-border">
+                <p className="px-4 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                  Contatos sem conversa
+                </p>
+                {contatosSemConversa.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => abrirContato(c.id)}
+                    disabled={openingContactId != null}
+                    className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/50 disabled:opacity-60"
+                  >
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-medium text-foreground">
+                      {(c.name?.trim() || c.phone || "?")
+                        .charAt(0)
+                        .toUpperCase()}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm text-foreground">
+                        {c.name?.trim() || c.phone || "Sem nome"}
+                      </p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {openingContactId === c.id
+                          ? "Abrindo conversa…"
+                          : c.name?.trim() && c.phone
+                            ? c.phone
+                            : "Sem conversa — clique para iniciar"}
+                      </p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </ScrollArea>
