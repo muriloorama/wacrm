@@ -5,7 +5,6 @@ import { toast } from 'sonner';
 import { Loader2, KeyRound } from 'lucide-react';
 
 import { createClient } from '@/lib/supabase/client';
-import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -20,10 +19,8 @@ import {
 const MIN_PASSWORD = 8;
 
 export function PasswordForm() {
-  const { profile } = useAuth();
   const supabase = createClient();
 
-  const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
   const [confirm, setConfirm] = useState('');
   const [saving, setSaving] = useState(false);
@@ -31,10 +28,6 @@ export function PasswordForm() {
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!profile?.email) {
-      toast.error('Não é possível alterar a senha sem um e-mail atual');
-      return;
-    }
     if (next.length < MIN_PASSWORD) {
       setConfirmError(`A senha deve ter pelo menos ${MIN_PASSWORD} caracteres`);
       return;
@@ -47,19 +40,7 @@ export function PasswordForm() {
     setSaving(true);
 
     try {
-      // Supabase doesn't expose a "verify password without issuing a
-      // session" API, so we re-authenticate with the provided current
-      // password. If it matches, the session refreshes silently; if it
-      // doesn't, we abort before calling updateUser.
-      const { error: signInError } = await supabase.auth.signInWithPassword({
-        email: profile.email,
-        password: current,
-      });
-      if (signInError) {
-        toast.error('A senha atual está incorreta');
-        return;
-      }
-
+      // A sessão já autentica o usuário — não pedimos a senha atual.
       const { error: updateError } = await supabase.auth.updateUser({
         password: next,
       });
@@ -68,7 +49,6 @@ export function PasswordForm() {
         return;
       }
 
-      setCurrent('');
       setNext('');
       setConfirm('');
       toast.success('Senha atualizada');
@@ -95,21 +75,6 @@ export function PasswordForm() {
 
       <CardContent>
         <form onSubmit={onSubmit} className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="current-password" className="text-foreground">
-              Senha atual
-            </Label>
-            <Input
-              id="current-password"
-              type="password"
-              value={current}
-              onChange={(e) => setCurrent(e.target.value)}
-              autoComplete="current-password"
-              disabled={saving}
-              required
-            />
-          </div>
-
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="new-password" className="text-foreground">
@@ -152,7 +117,7 @@ export function PasswordForm() {
           <div className="flex justify-end">
             <Button
               type="submit"
-              disabled={saving || !current || !next || !confirm}
+              disabled={saving || !next || !confirm}
             >
               {saving ? (
                 <>
