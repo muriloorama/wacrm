@@ -77,15 +77,21 @@ type ContactMatch = {
 const CONTACT_SEARCH_MIN = 2;
 
 /**
- * Conversa do contato, criando uma se ele ainda não tiver nenhuma. Espelha o
- * find-or-create de `/api/whatsapp/send`: uma conversa por contato, sem canal
- * definido — o canal é resolvido no envio da primeira mensagem. Retorna
- * `null` em qualquer falha (o chamador avisa o usuário).
+ * Conversa do contato, criando uma se ele ainda não tiver nenhuma.
+ *
+ * O `channelId` é obrigatório de propósito: uma conversa sem canal cai no
+ * fallback `whatsapp_config` da conta na hora de enviar
+ * (`lib/whatsapp/send-message.ts`), e contas que usam os canais novos não
+ * têm esse registro — o agente abriria a thread e tomaria
+ * "WhatsApp not configured" ao mandar a primeira mensagem.
+ *
+ * Retorna `null` em qualquer falha (o chamador avisa o usuário).
  */
 async function resolveConversationForContact(
   accountId: string,
   userId: string,
   contactId: string,
+  channelId: string,
 ): Promise<Conversation | null> {
   const supabase = createClient();
 
@@ -109,6 +115,7 @@ async function resolveConversationForContact(
           account_id: accountId,
           user_id: userId,
           contact_id: contactId,
+          channel_id: channelId,
         })
         .select("id")
         .single()
@@ -232,6 +239,10 @@ export function ConversationList({
   // aberto (insert da conversa em andamento).
   const [contactMatches, setContactMatches] = useState<ContactMatch[]>([]);
   const [openingContactId, setOpeningContactId] = useState<string | null>(null);
+  // Contato esperando o agente escolher de qual caixa (canal) vai falar.
+  const [channelPickerContactId, setChannelPickerContactId] = useState<
+    string | null
+  >(null);
   // Filtro por origem do lead. null = todas as origens.
   const [selectedOrigem, setSelectedOrigem] = useState<string | null>(null);
   const [pipelines, setPipelines] = useState<PipelineOption[]>([]);
@@ -603,15 +614,29 @@ export function ConversationList({
    * da primeira mensagem.
    */
   const abrirContato = useCallback(
-    async (contactId: string) => {
+    async (contactId: string, channelId?: string) => {
       const userId = user?.id;
       if (!accountId || !userId || openingContactId) return;
+
+      // De qual número o lead vai receber a primeira mensagem: o canal
+      // selecionado no filtro; em "Todos os canais", o único ao qual o
+      // agente tem acesso. Com mais de um e nenhum selecionado, quem
+      // escolhe é ele — abre o seletor e para por aqui.
+      const canal =
+        channelId ?? selectedChannelId ?? (channels.length === 1 ? channels[0].id : null);
+      if (!canal) {
+        setChannelPickerContactId(contactId);
+        return;
+      }
+
+      setChannelPickerContactId(null);
       setOpeningContactId(contactId);
 
       const conv = await resolveConversationForContact(
         accountId,
         userId,
         contactId,
+        canal,
       );
       setOpeningContactId(null);
 
@@ -628,7 +653,15 @@ export function ConversationList({
       onSelect(conv);
       setSearch("");
     },
-    [accountId, user?.id, openingContactId, conversations, onSelect],
+    [
+      accountId,
+      user?.id,
+      openingContactId,
+      conversations,
+      onSelect,
+      selectedChannelId,
+      channels,
+    ],
   );
 
   const toggleTag = useCallback((id: string) => {
@@ -1202,8 +1235,8 @@ export function ConversationList({
                   Contatos sem conversa
                 </p>
                 {contatosSemConversa.map((c) => (
+                  <div key={c.id}>
                   <button
-                    key={c.id}
                     type="button"
                     onClick={() => abrirContato(c.id)}
                     disabled={openingContactId != null}
@@ -1227,6 +1260,30 @@ export function ConversationList({
                       </p>
                     </div>
                   </button>
+
+                  {/* Com mais de uma caixa e nenhuma selecionada no filtro,
+                      o agente escolhe de qual número o lead vai receber a
+                      primeira mensagem — a conversa nasce nessa caixa. */}
+                  {channelPickerContactId === c.id && (
+                    <div className="border-l-2 border-primary bg-muted/30 px-4 py-2">
+                      <p className="pb-1 text-[11px] text-muted-foreground">
+                        Falar com {c.name?.trim() || c.phone} por qual caixa?
+                      </p>
+                      <div className="flex flex-col items-start gap-1">
+                        {channels.map((ch) => (
+                          <button
+                            key={ch.id}
+                            type="button"
+                            onClick={() => abrirContato(c.id, ch.id)}
+                            className="rounded-md px-2 py-1 text-xs text-foreground hover:bg-muted"
+                          >
+                            {ch.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  </div>
                 ))}
               </div>
             )}

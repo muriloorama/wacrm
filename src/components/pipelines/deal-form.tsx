@@ -495,7 +495,7 @@ export function DealForm({
                 onChange={(e) => setChannelId(e.target.value)}
                 className="h-9 w-full rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary"
               >
-                <option value="">Sem caixa (só admin vê)</option>
+                <option value="">Sem caixa</option>
                 {channels.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
@@ -503,8 +503,11 @@ export function DealForm({
                 ))}
               </select>
               <p className="text-[11px] text-muted-foreground">
-                Define quem vê este card no Kanban. Agentes só veem os cards
-                das caixas atribuídas a eles.
+                Define quem vê este card no Kanban. Com uma caixa, veem o
+                admin e os agentes dela. Sem caixa, veem o admin, o
+                responsável do card e — enquanto ninguém for responsável e
+                ele estiver em Formulário — todos os agentes (o pool de
+                leads).
               </p>
             </div>
 
