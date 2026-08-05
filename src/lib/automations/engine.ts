@@ -13,6 +13,7 @@ import type {
   UpdateContactFieldStepConfig,
   WaitStepConfig,
   CreateDealStepConfig,
+  MoveDealStageStepConfig,
   AssignConversationStepConfig,
 } from '@/types'
 import { supabaseAdmin } from './admin-client'
@@ -545,6 +546,30 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       return 'deal created'
     }
 
+    case 'move_deal_stage': {
+      const cfg = step.step_config as MoveDealStageStepConfig
+      if (!cfg.pipeline_id || !cfg.stage_id) {
+        throw new Error('move_deal_stage needs pipeline + stage')
+      }
+      if (!args.contactId) throw new Error('move_deal_stage needs contact')
+      // Só negócios ABERTOS e só neste funil: um lead ganho/perdido não volta
+      // para o meio da esteira porque alguém repetiu a palavra-chave.
+      const { data: deals } = await db
+        .from('deals')
+        .select('id, stage_id')
+        .eq('account_id', args.automation.account_id)
+        .eq('contact_id', args.contactId)
+        .eq('pipeline_id', cfg.pipeline_id)
+        .eq('status', 'open')
+      const alvos = (deals ?? []).filter((d) => d.stage_id !== cfg.stage_id)
+      if (alvos.length === 0) return 'no open deal to move'
+      await db
+        .from('deals')
+        .update({ stage_id: cfg.stage_id, updated_at: new Date().toISOString() })
+        .in('id', alvos.map((d) => d.id as string))
+      return `moved ${alvos.length} deal(s)`
+    }
+
     case 'send_webhook': {
       const cfg = step.step_config as SendWebhookStepConfig
       if (!cfg.url) throw new Error('send_webhook needs url')
@@ -607,7 +632,15 @@ function triggerMatches(automation: Automation, ctx: AutomationContext | undefin
     if (!cfg?.tag_id) return false
     return cfg.tag_id === ctx?.tag_id
   }
-  if (automation.trigger_type !== 'keyword_match') return true
+  // keyword_match (mensagem do cliente) e agent_message_sent (mensagem do
+  // atendente) usam a MESMA configuração de palavras-chave; o que muda é
+  // quem dispara, decidido lá no webhook/rota de envio.
+  if (
+    automation.trigger_type !== 'keyword_match' &&
+    automation.trigger_type !== 'agent_message_sent'
+  ) {
+    return true
+  }
   const cfg = automation.trigger_config as KeywordMatchTriggerConfig
   if (!cfg?.keywords || cfg.keywords.length === 0) return false
   const text = (ctx?.message_text ?? '').toString()

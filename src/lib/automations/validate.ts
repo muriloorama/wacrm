@@ -96,6 +96,15 @@ function validateOne(step: StepLike, path: string, issues: ValidationIssue[]): v
         issues.push({ path: `${path}.title`, message: 'o título é obrigatório' })
       }
       break
+    case 'move_deal_stage':
+      // Sem título: este passo move o card que já existe, não cria nenhum.
+      if (!nonEmpty(c.pipeline_id)) {
+        issues.push({ path: `${path}.pipeline_id`, message: 'o funil é obrigatório' })
+      }
+      if (!nonEmpty(c.stage_id)) {
+        issues.push({ path: `${path}.stage_id`, message: 'a etapa de destino é obrigatória' })
+      }
+      break
     case 'wait':
       if (typeof c.amount !== 'number' || !Number.isFinite(c.amount) || c.amount <= 0) {
         issues.push({ path: `${path}.amount`, message: 'o tempo de espera deve ser maior que 0' })
@@ -147,7 +156,9 @@ export function validateTriggerForActivation(
   const issues: ValidationIssue[] = []
   const cfg = (triggerConfig ?? {}) as Record<string, unknown>
 
-  if (triggerType === 'keyword_match') {
+  // Os dois gatilhos de palavra-chave (cliente e atendente) têm a mesma
+  // configuração, logo a mesma exigência: sem palavra, nada dispararia.
+  if (triggerType === 'keyword_match' || triggerType === 'agent_message_sent') {
     const k = cfg.keywords
     if (!Array.isArray(k) || k.length === 0) {
       issues.push({ path: 'trigger.keywords', message: 'pelo menos uma palavra-chave é obrigatória' })

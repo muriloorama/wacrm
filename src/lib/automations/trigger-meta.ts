@@ -19,6 +19,10 @@ export const TRIGGER_META: Record<AutomationTriggerType, TriggerMeta> = {
     label: 'Correspondência de palavra-chave',
     pillClass: 'border-purple-500/30 bg-purple-500/10 text-purple-300',
   },
+  agent_message_sent: {
+    label: 'Atendente enviou palavra-chave',
+    pillClass: 'border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-300',
+  },
   new_contact_created: {
     label: 'Novo contato',
     pillClass: 'border-primary/30 bg-primary/10 text-primary',

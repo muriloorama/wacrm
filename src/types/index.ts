@@ -442,6 +442,13 @@ export type AutomationTriggerType =
   | 'new_message_received'
   | 'first_inbound_message'
   | 'keyword_match'
+  /**
+   * Palavra-chave numa mensagem ENVIADA pelo atendente (do celular ou pela
+   * caixa de entrada). Os gatilhos acima só escutam o cliente; este é o
+   * espelho, para regras do tipo "escrevi 'orçamento enviado' → move o card".
+   * Mensagem disparada por automação (sender_type 'bot') nunca aciona.
+   */
+  | 'agent_message_sent'
   | 'new_contact_created'
   | 'conversation_assigned'
   | 'tag_added'
@@ -455,6 +462,7 @@ export type AutomationStepType =
   | 'assign_conversation'
   | 'update_contact_field'
   | 'create_deal'
+  | 'move_deal_stage'
   | 'wait'
   | 'condition'
   | 'send_webhook'
@@ -522,6 +530,16 @@ export interface CreateDealStepConfig {
   stage_id: string;
   title: string;
   value?: number;
+}
+
+/**
+ * Move o negócio ABERTO do contato para outra etapa do mesmo funil, em vez de
+ * criar um card novo (o que deixava o lead com dois cards). Sem negócio aberto
+ * no funil escolhido, o passo não faz nada — não inventa card.
+ */
+export interface MoveDealStageStepConfig {
+  pipeline_id: string;
+  stage_id: string;
 }
 
 export interface WaitStepConfig {

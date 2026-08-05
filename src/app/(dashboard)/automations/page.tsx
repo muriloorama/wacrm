@@ -99,7 +99,18 @@ export default function AutomationsPage() {
         prev?.map((x) => (x.id === a.id ? { ...x, is_active: !next } : x)) ?? prev,
       )
       const body = await res.json().catch(() => ({}))
-      toast.error(body?.error ?? "Falha ao atualizar")
+      // A API devolve `issues` com o campo que impede a ativação. Sem isto o
+      // usuário só via "configuração inválida" e não tinha como saber qual
+      // passo consertar — o editor já mostra o detalhe, a lista não mostrava.
+      const firstIssue: { path?: string; message?: string } | undefined =
+        body?.issues?.[0]
+      if (firstIssue?.message) {
+        toast.error(firstIssue.message, {
+          description: firstIssue.path ? `em ${firstIssue.path}` : undefined,
+        })
+      } else {
+        toast.error(body?.error ?? "Falha ao atualizar")
+      }
       return
     }
     toast.success(next ? "Automação ativada" : "Automação pausada")

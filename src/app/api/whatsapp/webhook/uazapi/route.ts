@@ -1039,6 +1039,30 @@ async function processMessage(
       }
     });
   }
+
+  // 4) Mensagem ENVIADA pelo atendente do próprio celular: só o gatilho
+  //    `agent_message_sent`. Nenhum dos gatilhos de entrada dispara aqui —
+  //    isto é para regras do tipo "escrevi 'orçamento enviado' → move o card".
+  //    O que o CRM manda pela API já saiu antes (wasSentByApi), então
+  //    mensagem de automação/IA nunca chega neste ponto e não há laço.
+  if (isOutgoing && !isGroupMsg) {
+    const outboundText = contentText ?? "";
+    if (outboundText.trim()) {
+      after(() => {
+        runAutomationsForTrigger({
+          accountId,
+          triggerType: "agent_message_sent",
+          contactId: contact.id,
+          context: {
+            message_text: outboundText,
+            conversation_id: conversation.id,
+          },
+        }).catch((err) =>
+          console.error("[webhook] automação de saída falhou:", err),
+        );
+      });
+    }
+  }
 }
 
 // ------------------------------------------------------------

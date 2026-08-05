@@ -96,6 +96,7 @@ const STEP_META: Record<AutomationStepType, StepMeta> = {
   assign_conversation: { label: "Atribuir conversa", icon: UserCheck, border: "border-l-primary" },
   update_contact_field: { label: "Atualizar campo do contato", icon: PencilLine, border: "border-l-primary" },
   create_deal: { label: "Criar negócio", icon: Briefcase, border: "border-l-primary" },
+  move_deal_stage: { label: "Mover card de etapa", icon: Briefcase, border: "border-l-primary" },
   wait: { label: "Aguardar", icon: Hourglass, border: "border-l-border" },
   condition: { label: "Condição (Se/Senão)", icon: GitBranch, border: "border-l-amber-500" },
   send_webhook: { label: "Enviar webhook", icon: Webhook, border: "border-l-primary" },
@@ -110,6 +111,7 @@ const ADDABLE_STEPS: AutomationStepType[] = [
   "assign_conversation",
   "update_contact_field",
   "create_deal",
+  "move_deal_stage",
   "wait",
   "condition",
   "send_webhook",
@@ -123,7 +125,12 @@ const TRIGGER_OPTIONS: { value: AutomationTriggerType; label: string; hint: stri
     label: "Primeira mensagem do contato",
     hint: "Primeira vez que este contato envia mensagem para você (funciona também para contatos adicionados manualmente)",
   },
-  { value: "keyword_match", label: "Correspondência de palavra-chave", hint: "A mensagem contém palavra(s)-chave específica(s)" },
+  { value: "keyword_match", label: "Correspondência de palavra-chave", hint: "A mensagem RECEBIDA do cliente contém palavra(s)-chave específica(s)" },
+  {
+    value: "agent_message_sent",
+    label: "Atendente enviou palavra-chave",
+    hint: "Você (ou outro atendente) enviou uma mensagem contendo a palavra — do celular ou pela caixa de entrada. Mensagem de automação não conta.",
+  },
   { value: "new_contact_created", label: "Novo contato criado", hint: "Quando um contato é criado automaticamente a partir de uma mensagem recebida" },
   { value: "conversation_assigned", label: "Conversa atribuída", hint: "Quando atribuída a um agente" },
   { value: "tag_added", label: "Etiqueta adicionada", hint: "Quando uma etiqueta é adicionada a um contato" },
@@ -154,6 +161,8 @@ function blankConfig(type: AutomationStepType): Record<string, unknown> {
       return { field: "name", value: "" }
     case "create_deal":
       return { pipeline_id: "", stage_id: "", title: "", value: 0 }
+    case "move_deal_stage":
+      return { pipeline_id: "", stage_id: "" }
     case "wait":
       return { amount: 1, unit: "hours" }
     case "condition":
@@ -844,7 +853,7 @@ function TriggerCard({
                 {TRIGGER_OPTIONS.find((o) => o.value === type)?.hint}
               </p>
             </div>
-            {type === "keyword_match" && (
+            {(type === "keyword_match" || type === "agent_message_sent") && (
               <KeywordMatchConfig
                 config={config as unknown as KeywordMatchTriggerConfig}
                 onChange={onConfigChange}
@@ -1325,6 +1334,21 @@ function StepEditor({
               className="bg-muted text-foreground"
             />
           </FieldBlock>
+        </>
+      )
+    case "move_deal_stage":
+      return (
+        <>
+          <DealPipelineFields
+            pipelineId={(cfg.pipeline_id as string) ?? ""}
+            stageId={(cfg.stage_id as string) ?? ""}
+            onChange={(patch) => set(patch)}
+          />
+          <p className="text-[11px] text-muted-foreground">
+            Move o card que o contato já tem neste funil para a etapa escolhida.
+            Não cria card novo — se o contato não tiver negócio aberto aqui, o
+            passo é ignorado.
+          </p>
         </>
       )
     case "wait":

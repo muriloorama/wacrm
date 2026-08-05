@@ -1,5 +1,6 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, after } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { runAutomationsForTrigger } from '@/lib/automations/engine'
 import {
   checkRateLimit,
   rateLimitResponse,
@@ -190,6 +191,35 @@ export async function POST(request: Request) {
         await advanceDealOnAgentReply(supabase, accountId, conversationId)
       } catch (e) {
         console.error('advanceDealOnAgentReply:', e)
+      }
+
+      // Gatilho `agent_message_sent`: mensagem que o atendente escreveu na
+      // caixa de entrada. O webhook cobre o que ele digita no celular, mas
+      // o que sai por aqui nunca volta pelo webhook (wasSentByApi), então
+      // sem este disparo a regra só valeria para metade dos envios.
+      if (typeof content_text === 'string' && content_text.trim()) {
+        after(async () => {
+          try {
+            const { data: conv } = await supabase
+              .from('conversations')
+              .select('contact_id')
+              .eq('id', conversationId)
+              .eq('account_id', accountId)
+              .maybeSingle()
+            if (!conv?.contact_id) return
+            await runAutomationsForTrigger({
+              accountId,
+              triggerType: 'agent_message_sent',
+              contactId: conv.contact_id as string,
+              context: {
+                message_text: content_text,
+                conversation_id: conversationId,
+              },
+            })
+          } catch (e) {
+            console.error('agent_message_sent:', e)
+          }
+        })
       }
 
       return NextResponse.json({
