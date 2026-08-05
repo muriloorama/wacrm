@@ -24,6 +24,7 @@ import {
   ArchiveRestore,
   Pin,
   PinOff,
+  MessageSquarePlus,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -71,10 +72,15 @@ type ContactMatch = {
   id: string;
   name: string | null;
   phone: string | null;
+  /** Origem do lead — usada quando busca e filtro de origem estão ativos juntos. */
+  origem?: string | null;
 };
 
 /** A partir de quantos caracteres a busca vai ao banco procurar contatos. */
 const CONTACT_SEARCH_MIN = 2;
+
+/** Teto de contatos carregados ao filtrar por origem. */
+const ORIGEM_CONTACTS_LIMIT = 200;
 
 /**
  * Conversa do contato, criando uma se ele ainda não tiver nenhuma.
@@ -245,6 +251,19 @@ export function ConversationList({
   >(null);
   // Filtro por origem do lead. null = todas as origens.
   const [selectedOrigem, setSelectedOrigem] = useState<string | null>(null);
+  // Contatos da origem selecionada buscados no banco. O filtro precisa mostrar
+  // TODOS os leads daquela origem, e não só quem já tem conversa: lead de
+  // formulário/Lead Ads nasce como contato + card no funil, sem conversa
+  // nenhuma. Os que não têm conversa saem na seção "Contatos sem conversa",
+  // onde um clique cria a conversa e abre a thread para o agente chamar.
+  // Guardado junto da origem que gerou a lista: enquanto o fetch da origem
+  // nova não volta, `origem` ainda é a antiga e o consumo abaixo descarta a
+  // lista — sem isso a caixa mostraria por um instante os leads da origem
+  // anterior.
+  const [origemContacts, setOrigemContacts] = useState<{
+    origem: string | null;
+    items: ContactMatch[];
+  }>({ origem: null, items: [] });
   const [pipelines, setPipelines] = useState<PipelineOption[]>([]);
   const [selectedPipelineId, setSelectedPipelineId] = useState<string | null>(
     null,
@@ -576,7 +595,7 @@ export function ConversationList({
 
       const { data } = await supabase
         .from("contacts")
-        .select("id, name, phone")
+        .select("id, name, phone, origem")
         .or(filtros.join(","))
         .order("created_at", { ascending: false })
         .limit(10);
@@ -587,6 +606,7 @@ export function ConversationList({
           id: c.id as string,
           name: (c.name as string | null) ?? null,
           phone: (c.phone as string | null) ?? null,
+          origem: (c.origem as string | null) ?? null,
         })),
       );
     }, 300);
@@ -597,15 +617,69 @@ export function ConversationList({
     };
   }, [search]);
 
-  // Só os que ainda não aparecem na lista de conversas. A guarda pelo termo
-  // evita exibir o resultado da busca anterior enquanto o debounce não roda.
-  const contatosSemConversa = useMemo(
-    () =>
-      search.trim().length < CONTACT_SEARCH_MIN
-        ? []
-        : contactMatches.filter((c) => !contactIdsComConversa.has(c.id)),
-    [contactMatches, contactIdsComConversa, search],
-  );
+  // Contatos da origem escolhida, direto do banco. Sem isto o filtro só
+  // enxergava as conversas já carregadas e o agente via lista vazia mesmo
+  // tendo dezenas de leads daquela origem esperando o primeiro contato.
+  useEffect(() => {
+    if (!selectedOrigem || !accountId) return;
+    const supabase = createClient();
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from("contacts")
+        .select("id, name, phone, origem")
+        .eq("account_id", accountId)
+        .eq("origem", selectedOrigem)
+        .order("created_at", { ascending: false })
+        .limit(ORIGEM_CONTACTS_LIMIT);
+      if (cancelled) return;
+      setOrigemContacts({
+        origem: selectedOrigem,
+        items: (data ?? []).map((c) => ({
+          id: c.id as string,
+          name: (c.name as string | null) ?? null,
+          phone: (c.phone as string | null) ?? null,
+          origem: (c.origem as string | null) ?? null,
+        })),
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedOrigem, accountId]);
+
+  // Contatos exibidos abaixo das conversas: os que casam com o filtro atual
+  // mas ainda não têm conversa nenhuma. Vêm da busca por nome/telefone e/ou
+  // do filtro por origem; com os dois ligados, valem os que casam nos dois.
+  // A guarda pelo termo evita exibir o resultado da busca anterior enquanto
+  // o debounce não roda.
+  const contatosSemConversa = useMemo(() => {
+    const buscando = search.trim().length >= CONTACT_SEARCH_MIN;
+    let base: ContactMatch[];
+    if (buscando && selectedOrigem) {
+      base = contactMatches.filter((c) => c.origem === selectedOrigem);
+    } else if (buscando) {
+      base = contactMatches;
+    } else if (selectedOrigem) {
+      base =
+        origemContacts.origem === selectedOrigem ? origemContacts.items : [];
+    } else {
+      return [];
+    }
+    let result = base.filter((c) => !contactIdsComConversa.has(c.id));
+    // O filtro de funil também vale para quem ainda não tem conversa.
+    if (pipelineContactIds) {
+      result = result.filter((c) => pipelineContactIds.has(c.id));
+    }
+    return result;
+  }, [
+    contactMatches,
+    origemContacts,
+    contactIdsComConversa,
+    search,
+    selectedOrigem,
+    pipelineContactIds,
+  ]);
 
   /**
    * Abre (criando se preciso) a conversa de um contato que ainda não tem
@@ -1197,7 +1271,11 @@ export function ConversationList({
           </div>
         ) : filtered.length === 0 && contatosSemConversa.length === 0 ? (
           <div className="px-4 py-12 text-center">
-            <p className="text-sm text-muted-foreground">Nenhuma conversa encontrada</p>
+            <p className="text-sm text-muted-foreground">
+              {selectedOrigem
+                ? "Nenhum contato com essa origem"
+                : "Nenhuma conversa encontrada"}
+            </p>
           </div>
         ) : (
           <div className="flex flex-col">
@@ -1226,13 +1304,13 @@ export function ConversationList({
               />
             ))}
 
-            {/* Contatos que casam com a busca mas não têm conversa ainda —
-                tipicamente lead de formulário. Clicar abre a thread (criando
-                a conversa) para o agente dar o primeiro alô. */}
+            {/* Contatos que casam com o filtro (busca e/ou origem) mas não têm
+                conversa ainda — tipicamente lead de formulário. Clicar abre a
+                thread (criando a conversa) para o agente dar o primeiro alô. */}
             {contatosSemConversa.length > 0 && (
               <div className="border-t border-border">
                 <p className="px-4 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                  Contatos sem conversa
+                  Contatos sem conversa ({contatosSemConversa.length})
                 </p>
                 {contatosSemConversa.map((c) => (
                   <div key={c.id}>
@@ -1259,6 +1337,13 @@ export function ConversationList({
                             : "Sem conversa — clique para iniciar"}
                       </p>
                     </div>
+                    {/* Chamada explícita: o lead de formulário nunca mandou
+                        mensagem, então o agente precisa ver que dá para puxar
+                        assunto por aqui em vez de achar que só falta conversa. */}
+                    <span className="flex shrink-0 items-center gap-1 rounded-full bg-primary/10 px-2 py-1 text-[11px] font-medium text-primary">
+                      <MessageSquarePlus className="size-3.5" />
+                      {openingContactId === c.id ? "Abrindo…" : "Enviar mensagem"}
+                    </span>
                   </button>
 
                   {/* Com mais de uma caixa e nenhuma selecionada no filtro,
