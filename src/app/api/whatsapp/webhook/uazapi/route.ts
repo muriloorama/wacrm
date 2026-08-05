@@ -9,6 +9,7 @@ import { downloadMedia, getInstanceStatus } from "@/lib/whatsapp/uazapi-api";
 import { isB2Configured, uploadBuffer, publicUrl } from "@/lib/storage/b2";
 import { transcribeAudio, getAccountOpenAiKey } from "@/lib/whatsapp/transcribe";
 import { runAutomationsForTrigger } from "@/lib/automations/engine";
+import { advanceDealOnAgentReply } from "@/lib/deals/advance-on-agent-reply";
 import { dispatchInboundToFlows } from "@/lib/flows/engine";
 import { maybeAiRespond } from "@/lib/ai/reply";
 
@@ -1046,6 +1047,18 @@ async function processMessage(
   //    O que o CRM manda pela API já saiu antes (wasSentByApi), então
   //    mensagem de automação/IA nunca chega neste ponto e não há laço.
   if (isOutgoing && !isGroupMsg) {
+    // Mesma regra da caixa de entrada: respondeu, o card sai de "Aguardando
+    // Atendimento". Faltava aqui, então quem atendia pelo aparelho deixava
+    // o card parado — a pessoa conversando e o kanban dizendo que ninguém
+    // tinha pegado.
+    after(async () => {
+      try {
+        await advanceDealOnAgentReply(db, accountId, conversation.id);
+      } catch (err) {
+        console.error("[webhook] advanceDealOnAgentReply:", err);
+      }
+    });
+
     const outboundText = contentText ?? "";
     if (outboundText.trim()) {
       after(() => {
