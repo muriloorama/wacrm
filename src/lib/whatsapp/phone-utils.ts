@@ -18,6 +18,38 @@ export function normalizePhone(phone: string): string {
 }
 
 /**
+ * Chave canônica de CELULAR brasileiro, imune ao 9º dígito.
+ *
+ * O formulário do site recebe o número como a pessoa digita, com o 9
+ * ("+55 65 99260-8548"), mas o WhatsApp devolve vários números antigos —
+ * sobretudo fora do Sudeste — sem ele ("+55 65 9260-8548"). Comparando
+ * dígito a dígito, o mesmo cliente virava dois contatos: o card do funil
+ * ficava num e a conversa no outro.
+ *
+ * Devolve `null` (ou seja, "não aplico esta regra") fora do caso claro de
+ * celular BR — em especial para FIXO, cujo número começa em 2–5. Assim um
+ * fixo e um celular do mesmo DDD com os mesmos 8 dígitos finais continuam
+ * sendo pessoas diferentes.
+ */
+function brMobileKey(digits: string): string | null {
+  if (!digits.startsWith('55')) return null
+  const rest = digits.slice(2)
+
+  // DDD + 9 + oito dígitos (formato atual).
+  if (rest.length === 11) {
+    if (rest[2] !== '9') return null
+    return `55${rest.slice(0, 2)}${rest.slice(3)}`
+  }
+  // DDD + oito dígitos (formato antigo). Só celular: 8 ou 9 na frente.
+  if (rest.length === 10) {
+    const core = rest.slice(2)
+    if (core[0] !== '8' && core[0] !== '9') return null
+    return `55${rest.slice(0, 2)}${core}`
+  }
+  return null
+}
+
+/**
  * Compare two phone numbers tolerando diferença de código de país e de
  * trunk-prefix — SEM o antigo "últimos 8 dígitos", que fundia números
  * de DDDs diferentes no Brasil (ex.: (65) 99566-2000 e (11) 99566-2000
@@ -25,6 +57,8 @@ export function normalizePhone(phone: string): string {
  *
  * Casam quando:
  *   - as formas normalizadas são iguais; OU
+ *   - são o mesmo celular brasileiro com e sem o 9º dígito (mesmo DDD —
+ *     ver {@link brMobileKey}); OU
  *   - uma é a outra só com o código de país à frente (o mais curto, de
  *     pelo menos 10 dígitos, é sufixo do mais longo e a diferença é o
  *     CC, ≤ 3 dígitos); OU
@@ -36,6 +70,10 @@ export function phonesMatch(phone1: string, phone2: string): boolean {
   const n2 = normalizePhone(phone2)
   if (!n1 || !n2) return false
   if (n1 === n2) return true
+
+  const br1 = brMobileKey(n1)
+  const br2 = brMobileKey(n2)
+  if (br1 && br2 && br1 === br2) return true
 
   const [short, long] = n1.length <= n2.length ? [n1, n2] : [n2, n1]
   if (short.length >= 10 && long.endsWith(short) && long.length - short.length <= 3) {

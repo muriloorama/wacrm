@@ -61,6 +61,32 @@ describe("phonesMatch", () => {
     expect(phonesMatch("+370 6 394 9836", "37063949836")).toBe(true);
     expect(phonesMatch("(415) 555-1212", "+1 415-555-1212")).toBe(true);
   });
+
+  // Casos reais da Vila Real: o formulário grava o celular COM o 9º
+  // dígito e o WhatsApp devolve o mesmo número SEM ele, o que criava
+  // dois contatos para a mesma pessoa (card num, conversa no outro).
+  describe("celular brasileiro com e sem o 9º dígito", () => {
+    it("casa o mesmo celular nos dois formatos", () => {
+      expect(phonesMatch("5565992608548", "556592608548")).toBe(true);
+      expect(phonesMatch("556599318177", "5565999318177")).toBe(true);
+      expect(phonesMatch("+55 (65) 99678-6140", "556596786140")).toBe(true);
+    });
+
+    it("não casa DDDs diferentes com o mesmo final", () => {
+      expect(phonesMatch("5565992608548", "551192608548")).toBe(false);
+      expect(phonesMatch("5565992608548", "5511992608548")).toBe(false);
+    });
+
+    it("não casa fixo com celular do mesmo DDD", () => {
+      // Fixo começa em 2–5; sem esta guarda, (65) 3260-8548 seria tratado
+      // como o celular (65) 9 3260-8548.
+      expect(phonesMatch("556532608548", "5565932608548")).toBe(false);
+    });
+
+    it("não casa celulares diferentes do mesmo DDD", () => {
+      expect(phonesMatch("5565992608548", "5565992608549")).toBe(false);
+    });
+  });
 });
 
 describe("isValidE164", () => {
